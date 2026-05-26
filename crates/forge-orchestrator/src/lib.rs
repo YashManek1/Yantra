@@ -104,9 +104,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use chrono::Utc;
-    use yantra_core::{
-        AgentKind, Strictness, TaskClass, TaskId, TaskNode, TaskStatus, TruthToken,
-    };
+    use yantra_core::{AgentKind, Strictness, TaskClass, TaskId, TaskNode, TaskStatus, TruthToken};
     use yantra_stvp::{issue_token, SigningKey, SourceTruth};
 
     use super::*;
