@@ -1,0 +1,22 @@
+[package]
+name        = "yantra-eval"
+description = "SWE-bench Verified subset runner for automated evaluation of Yantra tasks"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[[bin]]
+name = "yantra-eval"
+path = "src/main.rs"
+
+[dependencies]
+yantra-core.workspace         = true
+yantra-orchestrator.workspace = true
+anyhow.workspace              = true
+tracing.workspace             = true
+tokio.workspace               = true
+
+[lints]
+workspace = true

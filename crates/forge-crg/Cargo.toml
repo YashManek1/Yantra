@@ -1,0 +1,18 @@
+[package]
+name        = "yantra-crg"
+description = "Code-Review Graph: build, query, and subgraph extraction"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace = true
+yantra-ast.workspace  = true
+thiserror.workspace   = true
+tracing.workspace     = true
+serde.workspace       = true
+
+[lints]
+workspace = true

@@ -1,0 +1,1 @@
+Implements Night Mode across Twilight planning, autonomous Night Run execution, and Dawn Digest reporting. It front-loads user decisions, runs approved task DAGs without approval gates, checkpoints progress, and summarizes outcomes.

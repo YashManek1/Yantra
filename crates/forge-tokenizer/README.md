@@ -1,0 +1,1 @@
+Provides BPE token counting and budget enforcement for model calls and context assembly. CRG rendering and model routing use this crate to keep generated prompts within hard token limits before they reach any provider.

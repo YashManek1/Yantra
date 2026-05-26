@@ -1,0 +1,1 @@
+Builds and queries the Code-Review Graph, Yantra's structural code-intelligence layer. It turns repository symbols and relationships into budget-bounded subgraphs that agents can use instead of naive whole-repository context.

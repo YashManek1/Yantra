@@ -1,0 +1,18 @@
+[package]
+name        = "yantra-skills"
+description = "Git-backed SKILL.md registry and skill-learning loop"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace   = true
+yantra-agents.workspace = true
+yantra-memory.workspace = true
+thiserror.workspace     = true
+tracing.workspace       = true
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name        = "yantra-agents"
+description = "Specialist agent implementations: Coder, Tester, Researcher, Refactorer, Red Team"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace     = true
+yantra-router.workspace   = true
+yantra-tools.workspace    = true
+yantra-memory.workspace   = true
+yantra-verifier.workspace = true
+thiserror.workspace       = true
+tracing.workspace         = true
+tokio.workspace           = true
+
+[lints]
+workspace = true

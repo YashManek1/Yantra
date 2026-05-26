@@ -1,0 +1,19 @@
+[package]
+name        = "yantra-verifier"
+description = "Three-gate verification: Truth Drift Detector, Static Analysis, and Boolean Exit Gate"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace  = true
+yantra-crg.workspace   = true
+yantra-lsp.workspace   = true
+yantra-stvp.workspace  = true
+thiserror.workspace    = true
+tracing.workspace      = true
+
+[lints]
+workspace = true

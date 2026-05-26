@@ -1,0 +1,1 @@
+Contains the specialist agent loops for coding, testing, research, refactoring, and red-team review. Agents receive orchestrated tasks, query CRG context, call models through the router, invoke tools, and send diffs through verification.

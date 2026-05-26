@@ -1,0 +1,1 @@
+Defines the Wave 2 distributed execution layer for conductor, worker, and witness coordination over QUIC. The placeholder crate exists now so the workspace topology can reserve the future Swarm Mode boundary.

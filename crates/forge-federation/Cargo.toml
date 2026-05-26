@@ -1,0 +1,16 @@
+[package]
+name        = "yantra-federation"
+description = "(Wave 2) Cross-repository CRG meta-graph for multi-repo reasoning"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace = true
+thiserror.workspace   = true
+tracing.workspace     = true
+
+[lints]
+workspace = true

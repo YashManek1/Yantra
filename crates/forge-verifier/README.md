@@ -1,0 +1,1 @@
+Implements the verification layer that checks generated diffs against truth drift, static analysis, tests, and grounding signals. It is the gate between agent output and any committed or user-visible change.

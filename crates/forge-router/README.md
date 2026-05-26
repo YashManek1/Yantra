@@ -1,0 +1,1 @@
+Defines the provider abstraction and tiered routing policy for Yantra model calls. It keeps the runtime model-agnostic by routing prompts through the `ModelProvider` trait and selecting local, free, low-cost, or frontier providers according to policy.

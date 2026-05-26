@@ -1,0 +1,1 @@
+Wraps Tree-sitter parsing and symbol extraction so source files become typed records for downstream code intelligence. The extracted symbols feed the Code-Review Graph and are cross-checked with LSP data during verification.

@@ -1,0 +1,20 @@
+[package]
+name        = "yantra-tools"
+description = "All MCP server implementations exposed to specialist agents"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace   = true
+yantra-crg.workspace    = true
+yantra-lsp.workspace    = true
+yantra-memory.workspace = true
+thiserror.workspace     = true
+tracing.workspace       = true
+tokio.workspace         = true
+
+[lints]
+workspace = true

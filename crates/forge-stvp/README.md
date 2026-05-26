@@ -1,0 +1,1 @@
+Implements the Source-Truth Validation Protocol that converts user intent into validated truth artifacts and signed truth tokens. The orchestrator must receive a valid token from this crate before scheduling user task work.

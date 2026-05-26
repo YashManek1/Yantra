@@ -1,0 +1,24 @@
+[package]
+name        = "yantra-sidecar"
+description = "Always-on background daemon: fs-watch, incremental CRG updates, drift notifications"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[[bin]]
+name = "yantra-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+yantra-core.workspace   = true
+yantra-crg.workspace    = true
+yantra-lsp.workspace    = true
+yantra-memory.workspace = true
+anyhow.workspace        = true
+tracing.workspace       = true
+tokio.workspace         = true
+
+[lints]
+workspace = true

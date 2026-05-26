@@ -1,0 +1,1 @@
+Provides the always-on background daemon that reacts to file saves, refreshes CRG state, collects LSP diagnostics, and sends live notifications. It keeps Yantra responsive between explicit user commands.

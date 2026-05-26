@@ -1,0 +1,1 @@
+Provides Yantra's observability substrate: OpenTelemetry spans, a SQLite trace store, cost gauge reporting, and watchdog heartbeat support. Every tool call, model call, and orchestrator decision is expected to flow through this layer.

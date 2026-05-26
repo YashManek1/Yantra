@@ -1,0 +1,1 @@
+Provides the command-line entry point for Yantra, including task submission, repository indexing, codebase questions, and Night Mode startup. It is intentionally thin and delegates runtime behavior to the lower layers.

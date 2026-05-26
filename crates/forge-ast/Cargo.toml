@@ -1,0 +1,16 @@
+[package]
+name        = "yantra-ast"
+description = "Tree-sitter wrapper, symbol extraction, and AST persistence"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace = true
+thiserror.workspace   = true
+tracing.workspace     = true
+
+[lints]
+workspace = true

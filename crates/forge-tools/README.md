@@ -1,0 +1,1 @@
+Hosts Yantra's MCP tool layer for repository, shell, CRG, LSP, memory, and browser capabilities. Agent access is mediated through declared capabilities so tools remain auditable and policy-controlled.

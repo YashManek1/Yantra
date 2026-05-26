@@ -1,0 +1,20 @@
+[package]
+name        = "yantra-stvp"
+description = "Source-Truth Validation Protocol: Interrogator, three Validators, and TruthToken issuance"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace   = true
+yantra-crg.workspace    = true
+yantra-memory.workspace = true
+thiserror.workspace     = true
+tracing.workspace       = true
+serde.workspace         = true
+uuid.workspace          = true
+
+[lints]
+workspace = true

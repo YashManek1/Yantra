@@ -1,0 +1,1 @@
+Shared foundational types used across all Yantra crates, including task identifiers, truth tokens, agent kinds, model identifiers, spans, and outcomes. This crate sits at the base of the dependency graph so higher layers can share vocabulary without coupling to runtime behavior.

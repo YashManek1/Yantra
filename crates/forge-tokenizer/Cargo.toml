@@ -1,0 +1,16 @@
+[package]
+name        = "yantra-tokenizer"
+description = "BPE token counter and budget enforcer for all model calls"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace = true
+thiserror.workspace   = true
+tracing.workspace     = true
+
+[lints]
+workspace = true

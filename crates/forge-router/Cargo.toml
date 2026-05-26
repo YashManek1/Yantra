@@ -1,0 +1,18 @@
+[package]
+name        = "yantra-router"
+description = "ModelProvider trait, tiered routing policy, and prompt translator"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace = true
+thiserror.workspace   = true
+tracing.workspace     = true
+tokio.workspace       = true
+serde.workspace       = true
+
+[lints]
+workspace = true

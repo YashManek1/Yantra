@@ -1,0 +1,7 @@
+# Threshold-based lint configuration.
+# Lint levels (pedantic = warn, needless_return / module_name_repetitions /
+# must_use_candidate = allow) live in [workspace.lints.clippy] in Cargo.toml.
+
+cognitive-complexity-threshold = 20
+too-many-arguments-threshold   = 8
+type-complexity-threshold      = 250

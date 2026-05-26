@@ -1,0 +1,20 @@
+[package]
+name        = "yantra-serve"
+description = "Axum HTTP server and SSE Live Canvas for real-time agent state streaming"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace         = true
+yantra-night.workspace        = true
+yantra-orchestrator.workspace = true
+yantra-obs.workspace          = true
+thiserror.workspace           = true
+tracing.workspace             = true
+tokio.workspace               = true
+
+[lints]
+workspace = true

@@ -1,0 +1,1 @@
+Manages Language Server Protocol integration and exposes diagnostics, definitions, references, and hover information to the rest of the runtime. The sidecar and verifier use this crate to ground generated changes in real language tooling.

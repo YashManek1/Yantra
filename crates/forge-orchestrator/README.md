@@ -1,0 +1,1 @@
+Coordinates Yantra's cognitive DAG scheduler, debate engine, CSP planner, and speculation flow. It verifies truth tokens, dispatches work to agents, records decisions, and streams task state upward to user-facing surfaces.

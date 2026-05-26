@@ -1,0 +1,84 @@
+[workspace]
+members = [
+    "crates/forge-core",
+    "crates/forge-tokenizer",
+    "crates/forge-obs",
+    "crates/forge-router",
+    "crates/forge-ast",
+    "crates/forge-crg",
+    "crates/forge-lsp",
+    "crates/forge-memory",
+    "crates/forge-tools",
+    "crates/forge-stvp",
+    "crates/forge-verifier",
+    "crates/forge-agents",
+    "crates/forge-orchestrator",
+    "crates/forge-night",
+    "crates/forge-skills",
+    "crates/forge-sidecar",
+    "crates/forge-serve",
+    "crates/forge-cli",
+    "crates/forge-eval",
+    "crates/forge-swarm",
+    "crates/forge-federation",
+]
+resolver = "2"
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+authors      = ["Sankalp Systems <hello@sankalp.systems>"]
+license      = "Apache-2.0"
+rust-version = "1.85"
+
+# ---------------------------------------------------------------------------
+# Workspace-level dependency versions — crates inherit with `.workspace = true`
+# ---------------------------------------------------------------------------
+[workspace.dependencies]
+# Internal
+yantra-core         = { path = "crates/forge-core" }
+yantra-tokenizer    = { path = "crates/forge-tokenizer" }
+yantra-obs          = { path = "crates/forge-obs" }
+yantra-router       = { path = "crates/forge-router" }
+yantra-ast          = { path = "crates/forge-ast" }
+yantra-crg          = { path = "crates/forge-crg" }
+yantra-lsp          = { path = "crates/forge-lsp" }
+yantra-memory       = { path = "crates/forge-memory" }
+yantra-tools        = { path = "crates/forge-tools" }
+yantra-stvp         = { path = "crates/forge-stvp" }
+yantra-verifier     = { path = "crates/forge-verifier" }
+yantra-agents       = { path = "crates/forge-agents" }
+yantra-orchestrator = { path = "crates/forge-orchestrator" }
+yantra-night        = { path = "crates/forge-night" }
+yantra-skills       = { path = "crates/forge-skills" }
+yantra-serve        = { path = "crates/forge-serve" }
+yantra-swarm        = { path = "crates/forge-swarm" }
+yantra-federation   = { path = "crates/forge-federation" }
+
+# External
+tokio              = { version = "1",    features = ["full"] }
+serde              = { version = "1",    features = ["derive"] }
+serde_json         = "1"
+serde_yaml         = "0.9"
+thiserror          = "1"
+anyhow             = "1"
+uuid               = { version = "1",    features = ["v4", "v7", "serde"] }
+chrono             = { version = "0.4",  features = ["serde"] }
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3",  features = ["env-filter", "json"] }
+rusqlite           = { version = "0.31", features = ["bundled", "uuid", "chrono"] }
+reqwest            = { version = "0.12", features = ["json", "rustls-tls"] }
+clap               = { version = "4",    features = ["derive"] }
+proptest           = "1"
+
+# ---------------------------------------------------------------------------
+# Lint configuration — individual crates inherit with `[lints] workspace = true`
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+pedantic                = "warn"
+needless_return         = "allow"
+module_name_repetitions = "allow"
+must_use_candidate      = "allow"

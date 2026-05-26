@@ -1,0 +1,18 @@
+[package]
+name        = "yantra-night"
+description = "Night Mode: Twilight planning phase, autonomous Night Run, and Dawn Digest report"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[dependencies]
+yantra-core.workspace         = true
+yantra-orchestrator.workspace = true
+thiserror.workspace           = true
+tracing.workspace             = true
+tokio.workspace               = true
+
+[lints]
+workspace = true
