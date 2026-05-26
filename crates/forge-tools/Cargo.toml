@@ -8,13 +8,19 @@ license.workspace   = true
 publish             = false
 
 [dependencies]
-yantra-core.workspace   = true
-yantra-crg.workspace    = true
-yantra-lsp.workspace    = true
-yantra-memory.workspace = true
-thiserror.workspace     = true
-tracing.workspace       = true
-tokio.workspace         = true
+yantra-core.workspace     = true
+yantra-crg.workspace      = true
+yantra-lsp.workspace      = true
+yantra-memory.workspace   = true
+async-trait.workspace     = true
+chrono.workspace          = true
+gix.workspace             = true
+ring.workspace            = true
+serde.workspace           = true
+serde_json.workspace      = true
+thiserror.workspace       = true
+tokio.workspace           = true
+tracing.workspace         = true
 
 [lints]
 workspace = true

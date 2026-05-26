@@ -17,3 +17,14 @@
 //! - `forge-lsp` — `LSP` tool delegates here
 //! - `forge-memory` — memory read/write tools delegate here
 //! - `forge-agents` — consumers of every tool in this crate
+
+pub mod error;
+pub mod mcp;
+pub mod tools;
+
+pub use error::{McpError, ToolsError, ToolsResult};
+pub use mcp::{
+    JsonRpcErrorObject, JsonRpcRequest, JsonRpcResponse, McpRouter, McpServer, ToolCapability,
+};
+pub use tools::fs::FsMcpServer;
+pub use tools::git::GitMcpServer;
