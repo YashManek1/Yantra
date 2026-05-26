@@ -4920,6 +4920,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "uuid",
+ "yantra-ast",
  "yantra-core",
  "yantra-crg",
  "yantra-memory",

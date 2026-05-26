@@ -2,8 +2,8 @@
 //!
 //! Refuses to let any task proceed without a cryptographically signed
 //! `TruthToken`. The `Interrogator` classifies the incoming task, runs a
-//! tailored questionnaire, builds `SOURCE_TRUTH.yaml`, and stores it with
-//! SHA-256 content-hash verification.
+//! tailored questionnaire, builds `SOURCE_TRUTH.yaml`, runs validators, issues
+//! an Ed25519-signed `TruthToken`, and stores everything to disk.
 //!
 //! ## Input
 //! - A natural-language task description from the user or Night Mode planner
@@ -13,9 +13,7 @@
 //! ## Output
 //! - `SourceTruth` — validated task specification stored in
 //!   `.yantra/source_truth/{task_id}.yaml`
-//! - `TruthToken` issuance is the orchestrator's responsibility after receiving
-//!   the `SourceTruth` (this crate produces the source truth; the orchestrator
-//!   signs the token)
+//! - `TruthToken` — ed25519-signed proof issued after validation passes
 //!
 //! ## Related
 //! - `forge-crg` — provides `existing_truth_refs` for Validator 2 (v2)
@@ -24,13 +22,25 @@
 //! - `forge-verifier` — Truth Drift Detector checks diffs against the token
 
 pub mod classifier;
+pub mod drift;
 pub mod error;
 pub mod interrogator;
 pub mod questionnaire;
 pub mod source_truth;
+pub mod token;
+pub mod validation;
+pub mod validators;
 
 pub use classifier::TaskClassifier;
+pub use drift::{DriftKind, DriftViolation, TruthDriftDetector};
 pub use error::StvpError;
 pub use interrogator::{strictness_for_class, Interrogator, QuestionnaireUi};
 pub use questionnaire::{AnswerKind, Question};
 pub use source_truth::SourceTruth;
+pub use token::{issue_token, verify_token, SigningKey};
+pub use validation::{
+    run_all, ProjectContext, ValidationReport, ValidationViolation, ViolationSeverity,
+};
+pub use validators::{
+    CodebaseRealityValidator, InternalConsistencyValidator, TestabilityValidator,
+};

@@ -212,12 +212,13 @@ fn sha256_hex(data: &[u8]) -> String {
 
 fn hex_encode(bytes: &[u8]) -> String {
     use std::fmt::Write;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut hex_string, byte| {
+    bytes.iter().fold(
+        String::with_capacity(bytes.len() * 2),
+        |mut hex_string, byte| {
             write!(hex_string, "{byte:02x}").expect("writing to a String never fails");
             hex_string
-        })
+        },
+    )
 }
 
 #[cfg(test)]

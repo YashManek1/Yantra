@@ -9,6 +9,7 @@ publish             = false
 
 [dependencies]
 yantra-core.workspace   = true
+yantra-ast.workspace    = true
 yantra-crg.workspace    = true
 yantra-memory.workspace = true
 thiserror.workspace     = true
