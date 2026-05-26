@@ -16,3 +16,15 @@
 //! - `forge-crg` — consumes symbols to build graph nodes and edges
 //! - `forge-lsp` — cross-checks `AST` results against `LSP` diagnostics
 //! - `forge-sidecar` — triggers incremental re-parses on file save
+
+pub mod db;
+pub mod error;
+pub mod extractor;
+pub mod parser;
+pub mod symbol;
+
+pub use db::{create_schema, insert_symbol, query_symbol, AST_SCHEMA_SQL};
+pub use error::{AstError, AstResult};
+pub use extractor::{extract_calls, extract_imports, extract_symbols, CallSite, Import};
+pub use parser::{parse_file, LanguageKind, LanguageRegistry, ParsedFile};
+pub use symbol::{Symbol, SymbolKind};
