@@ -64,30 +64,45 @@ impl EmbeddingStore {
             [],
         )?;
 
-        let mut select_statement = sqlite_connection
-            .prepare("SELECT id, name, docstring FROM symbols WHERE kind != 'file'")?;
+        let mut select_statement = sqlite_connection.prepare(
+            "SELECT s.id, s.name, s.docstring, s.kind, s.connectivity_score, f.path
+             FROM symbols s
+             JOIN files f ON s.file_id = f.id
+             WHERE s.kind != 'file'",
+        )?;
         let symbol_rows = select_statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i32>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })?;
 
         let mut symbol_identifiers: Vec<String> = Vec::new();
-        let mut text_passages: Vec<String> = Vec::new();
+        let mut passage_texts: Vec<String> = Vec::new();
 
         for row_result in symbol_rows {
-            let (symbol_id_string, symbol_name, symbol_docstring) = row_result?;
+            let (
+                symbol_identifier_string,
+                symbol_name,
+                symbol_docstring,
+                symbol_kind,
+                connectivity_score,
+                file_path,
+            ) = row_result?;
             let docstring_content = symbol_docstring.unwrap_or_default();
-            let passage_text =
-                format!("passage: Symbol name: {symbol_name}\nDocstring: {docstring_content}");
-            symbol_identifiers.push(symbol_id_string);
-            text_passages.push(passage_text);
+            let text_passage_content = format!(
+                "passage: [{symbol_kind}] {symbol_name} (connectivity: {connectivity_score}, file: {file_path})\nDocstring: {docstring_content}"
+            );
+            symbol_identifiers.push(symbol_identifier_string);
+            passage_texts.push(text_passage_content);
         }
 
-        if !text_passages.is_empty() {
-            let embeddings = self.embedding_model.embed(text_passages, None)?;
+        if !passage_texts.is_empty() {
+            let embedding_vectors = self.embedding_model.embed(passage_texts, None)?;
             let mut insert_statement = sqlite_connection.prepare(
                 "INSERT OR REPLACE INTO symbol_embeddings (symbol_id, vector) VALUES (?1, ?2)",
             )?;
@@ -95,12 +110,12 @@ impl EmbeddingStore {
             let mut in_memory_vectors: Vec<(SymbolId, Vec<f32>)> =
                 Vec::with_capacity(symbol_identifiers.len());
 
-            for (symbol_id_string, embedding_vector) in
-                symbol_identifiers.into_iter().zip(embeddings)
+            for (symbol_identifier_string, embedding_vector) in
+                symbol_identifiers.into_iter().zip(embedding_vectors)
             {
                 let vector_bytes = vector_to_bytes(&embedding_vector);
-                insert_statement.execute(params![symbol_id_string, vector_bytes])?;
-                if let Ok(symbol_identifier) = SymbolId::from_str(&symbol_id_string) {
+                insert_statement.execute(params![symbol_identifier_string, vector_bytes])?;
+                if let Ok(symbol_identifier) = SymbolId::from_str(&symbol_identifier_string) {
                     in_memory_vectors.push((symbol_identifier, embedding_vector));
                 }
             }
@@ -127,7 +142,8 @@ impl EmbeddingStore {
             }
         }
 
-        let formatted_query = format!("query: {query_text}");
+        let expanded_query_text = expand_query_keywords(query_text);
+        let formatted_query = format!("query: {expanded_query_text}");
         let mut query_embeddings = self.embedding_model.embed(vec![formatted_query], None)?;
         let result_vector = query_embeddings
             .pop()
@@ -224,7 +240,7 @@ impl EmbeddingStore {
         self.search_with_embedding(&query_vector, limit)
     }
 
-    fn load_vectors_from_db(&self, sqlite_connection: &Connection) -> anyhow::Result<()> {
+    pub fn load_vectors_from_db(&self, sqlite_connection: &Connection) -> anyhow::Result<()> {
         let mut select_statement =
             sqlite_connection.prepare("SELECT symbol_id, vector FROM symbol_embeddings")?;
         let embedding_rows = select_statement.query_map([], |row| {
@@ -245,6 +261,33 @@ impl EmbeddingStore {
 
         Ok(())
     }
+}
+
+fn expand_query_keywords(query_text: &str) -> String {
+    let lowercase_query = query_text.to_lowercase();
+    let mut words_list: Vec<&str> = lowercase_query
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|word| !word.is_empty())
+        .collect();
+
+    let stopwords_set: std::collections::HashSet<&str> = [
+        "where", "should", "how", "does", "what", "can", "the", "and", "for", "you", "file",
+        "with", "this", "that", "from", "into", "onto", "your", "under", "over", "about", "there",
+        "their", "here", "been", "have", "were",
+    ]
+    .iter()
+    .copied()
+    .collect();
+
+    words_list.retain(|word| !stopwords_set.contains(word) && word.len() >= 2);
+
+    let mut result_string = query_text.to_string();
+    if !words_list.is_empty() {
+        result_string.push(' ');
+        result_string.push_str(&words_list.join(" "));
+    }
+    result_string.push_str(" struct impl trait interface function class definition module");
+    result_string
 }
 
 fn vector_to_bytes(vector: &[f32]) -> Vec<u8> {

@@ -178,7 +178,6 @@ async fn main() -> anyhow::Result<()> {
     let routing_policy = RoutingPolicy::default();
     let router = Router::new(routing_policy, model_providers);
 
-    // 4. Handle Subcommand
     match cli_arguments.command {
         Commands::Index { path } => {
             let target_path_str = path.unwrap_or_else(|| ".".to_string());
@@ -191,29 +190,151 @@ async fn main() -> anyhow::Result<()> {
             }
             let database_connection = rusqlite::Connection::open(&crg_database_path)?;
 
-            let indexed_symbols_count =
-                index_directory_symbols(&target_path, &database_connection)?;
+            let graph_builder = yantra_crg::GraphBuilder::new(database_connection);
+            graph_builder.build_from_repo(&target_path)?;
+
+            let database_connection = graph_builder.into_connection();
+            let indexed_symbols_count: i64 = database_connection.query_row(
+                "SELECT COUNT(*) FROM symbols WHERE kind != 'file'",
+                [],
+                |row| row.get(0),
+            )?;
             println!("Successfully indexed {indexed_symbols_count} symbols.");
+
+            println!("Building graph cache and generating embeddings...");
+            let graph_cache = yantra_crg::GraphCache::build(&database_connection)?;
+            let crg_cache_path = project_root
+                .as_path()
+                .join(".yantra")
+                .join("crg_cache.json");
+            let serialized_graph = serde_json::to_string(&graph_cache)?;
+            fs::write(crg_cache_path, serialized_graph)?;
+
+            let embedding_store = yantra_crg::EmbeddingStore::new()?;
+            embedding_store.embed_all(&database_connection)?;
+            println!("All embeddings and cache built successfully.");
         }
         Commands::Ask { question } => {
-            let message = Message {
-                role: MessageRole::User,
-                content: question,
-                tool_calls: Vec::new(),
+            let crg_database_path = project_root.as_path().join(".yantra").join("crg.sqlite");
+            let crg_cache_path = project_root
+                .as_path()
+                .join(".yantra")
+                .join("crg_cache.json");
+            let mut subgraph_text = String::new();
+
+            if crg_database_path.exists() {
+                if let Ok(database_connection) = rusqlite::Connection::open(&crg_database_path) {
+                    let _ = yantra_crg::schema::create_crg_schema(&database_connection);
+
+                    let mut graph_cache_option = None;
+                    if crg_cache_path.exists() {
+                        if let Ok(cache_text) = fs::read_to_string(&crg_cache_path) {
+                            if let Ok(deserialized_graph_cache) =
+                                serde_json::from_str::<yantra_crg::GraphCache>(&cache_text)
+                            {
+                                graph_cache_option = Some(deserialized_graph_cache);
+                            }
+                        }
+                    }
+
+                    let graph_cache = if let Some(cached_graph) = graph_cache_option {
+                        cached_graph
+                    } else {
+                        let newly_built_graph =
+                            yantra_crg::GraphCache::build(&database_connection)?;
+                        if let Ok(serialized_graph) = serde_json::to_string(&newly_built_graph) {
+                            let _ = fs::write(&crg_cache_path, serialized_graph);
+                        }
+                        newly_built_graph
+                    };
+
+                    let embedding_store = yantra_crg::EmbeddingStore::new()?;
+                    embedding_store.load_vectors_from_db(&database_connection)?;
+                    let rendered_subgraph = yantra_crg::extract_subgraph(
+                        &graph_cache,
+                        &embedding_store,
+                        &question,
+                        8192,
+                        &[],
+                    )?;
+                    subgraph_text = rendered_subgraph.text;
+                }
+            }
+
+            if subgraph_text.is_empty() {
+                println!("(No CRG Subgraph found or extracted. Proceeding with question context only.)\n");
+            } else {
+                println!("## Extracted CRG Subgraph:\n{subgraph_text}\n");
+            }
+
+            let system_prompt = fs::read_to_string("crates/forge-agents/prompts/coder.md")
+                .unwrap_or_else(|_| "You write code in the dialect of the local repo. Use only symbols visible in the provided code-review subgraph.".to_string());
+
+            let code_context_section = if subgraph_text.is_empty() {
+                "No CRG index available for this repository.".to_string()
+            } else {
+                subgraph_text.clone()
             };
+
+            let user_content = format!(
+                "## Source Truth\nTask ID: ask\nClass: Docstring\nStrictness: Trust\n\n\
+                 ## Code Context (CRG Subgraph)\n{code_context_section}\n\n\
+                 ## Task\n{question}\n\n\
+                 ## Instructions\n\
+                 CRITICAL CONSTRAINT: You MUST only cite file paths and symbol names that are \
+                 explicitly listed verbatim in the CRG Subgraph block above. \
+                 Do NOT invent, guess, or hallucinate any file paths, struct names, function \
+                 names, or module paths that do not appear in the subgraph.\n\
+                 1. Identify the PRIMARY ARCHITECTURAL INSERTION POINT from the subgraph: the \
+                 struct, trait, or impl block where the new code belongs. \
+                 High-connectivity [SEED] symbols are strong candidates. \
+                 Low-hop [hop:1] symbols adjacent to seeds indicate the call flow.\n\
+                 2. Trace the connection/flow from seed symbols to the insertion point using \
+                 only the edges listed at the bottom of the subgraph (X -calls→ Y).\n\
+                 3. State your answer with the exact file path and symbol name as shown in the \
+                 subgraph. If the subgraph does not contain enough information to answer \
+                 definitively, say so explicitly rather than inventing an answer."
+            );
+
+            let messages = vec![
+                Message {
+                    role: MessageRole::System,
+                    content: system_prompt,
+                    tool_calls: Vec::new(),
+                },
+                Message {
+                    role: MessageRole::User,
+                    content: user_content,
+                    tool_calls: Vec::new(),
+                },
+            ];
+
             let completion_request = CompletionRequest {
-                messages: vec![message],
+                messages,
                 max_tokens: None,
-                temperature: 0.7,
+                temperature: 0.2,
                 tools: None,
                 stop_sequences: Vec::new(),
             };
-            let routed_request = RoutedCompletionRequest {
+            let mut routed_request = RoutedCompletionRequest {
                 required_tier: ModelTier::Tier0,
                 completion_request,
             };
 
-            let provider = router.route(&routed_request)?;
+            let provider = router
+                .route(&routed_request)
+                .or_else(|_| {
+                    routed_request.required_tier = ModelTier::Tier1;
+                    router.route(&routed_request)
+                })
+                .or_else(|_| {
+                    routed_request.required_tier = ModelTier::Tier2;
+                    router.route(&routed_request)
+                })
+                .or_else(|_| {
+                    routed_request.required_tier = ModelTier::Tier3;
+                    router.route(&routed_request)
+                })?;
 
             let start_instant = std::time::Instant::now();
             let completion_response = provider.complete(routed_request.completion_request).await?;
@@ -325,41 +446,4 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-fn index_directory_symbols(
-    path: &Path,
-    connection: &rusqlite::Connection,
-) -> anyhow::Result<usize> {
-    let mut total_indexed_symbols = 0;
-
-    if path.is_file() {
-        if yantra_ast::LanguageRegistry::language_for_path(path).is_some() {
-            if let Ok(parsed_file) = yantra_ast::parse_file(path) {
-                if let Ok(symbols) = yantra_ast::extract_symbols(&parsed_file) {
-                    for symbol in symbols {
-                        yantra_ast::insert_symbol(connection, &symbol)?;
-                        total_indexed_symbols += 1;
-                    }
-                }
-            }
-        }
-    } else if path.is_dir() {
-        for directory_entry in fs::read_dir(path)? {
-            let directory_entry = directory_entry?;
-            let child_path = directory_entry.path();
-
-            if let Some(file_name_str) = child_path.file_name().and_then(|name| name.to_str()) {
-                if file_name_str.starts_with('.')
-                    || file_name_str == "target"
-                    || file_name_str == "node_modules"
-                {
-                    continue;
-                }
-            }
-            total_indexed_symbols += index_directory_symbols(&child_path, connection)?;
-        }
-    }
-
-    Ok(total_indexed_symbols)
 }

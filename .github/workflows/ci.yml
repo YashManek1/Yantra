@@ -136,7 +136,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
+        run: cargo install cargo-nextest --version 0.9.106 --locked
         shell: bash
 
       - name: Run tests

@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+    # gix-date vulnerability (requires rustc >= 1.91 to fix, but workspace uses 1.86.0)
+    "RUSTSEC-2025-0140"
+]

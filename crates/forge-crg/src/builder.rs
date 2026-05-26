@@ -583,7 +583,14 @@ fn collect_supported_files(path: &Path, files: &mut Vec<PathBuf>) -> anyhow::Res
             let entry = entry?;
             let child_path = entry.path();
             if let Some(name) = child_path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with('.') || name == "target" || name == "node_modules" {
+                if name.starts_with('.')
+                    || name == "target"
+                    || name == "node_modules"
+                    || name == "tests"
+                    || name == "benches"
+                    || name == "examples"
+                    || name == "fixtures"
+                {
                     continue;
                 }
             }

@@ -23,6 +23,58 @@ use yantra_core::SymbolId;
 pub fn compute_connectivity(connection: &Connection, symbol_id: &SymbolId) -> i32 {
     let symbol_string = symbol_id.to_string();
 
+    let is_test: bool = connection
+        .query_row(
+            "SELECT s.name, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?1",
+            [&symbol_string],
+            |row| {
+                let name: String = row.get(0)?;
+                let path: String = row.get(1)?;
+                let name_lower = name.to_lowercase();
+                let is_test_name = name_lower.starts_with("test_")
+                    || name_lower.contains("_test_")
+                    || name_lower == "test"
+                    || name_lower.ends_with("_test");
+                let file_name = path.split(['/', '\\']).next_back().unwrap_or("");
+                let file_name_lower = file_name.to_lowercase();
+                let is_test_file_name = file_name_lower.starts_with("test_")
+                    || file_name_lower.contains("_test.")
+                    || file_name_lower.contains(".test.");
+                let path_has_test_segment = path.split(['/', '\\']).any(|segment| {
+                    let segment_lower = segment.to_lowercase();
+                    segment_lower == "tests"
+                        || segment_lower == "benches"
+                        || segment_lower == "fixtures"
+                        || segment_lower == "examples"
+                });
+                Ok(is_test_name || is_test_file_name || path_has_test_segment)
+            },
+        )
+        .unwrap_or_else(|_| {
+            connection
+                .query_row(
+                    "SELECT file_id FROM symbols WHERE id = ?1",
+                    [&symbol_string],
+                    |row| {
+                        let file_id: String = row.get(0)?;
+                        let file_name = file_id.split(['/', '\\']).next_back().unwrap_or("");
+                        let file_name_lower = file_name.to_lowercase();
+                        let is_test_file_name = file_name_lower.starts_with("test_")
+                            || file_name_lower.contains("_test.")
+                            || file_name_lower.contains(".test.");
+                        let path_has_test_segment = file_id.split(['/', '\\']).any(|segment| {
+                            let segment_lower = segment.to_lowercase();
+                            segment_lower == "tests"
+                                || segment_lower == "benches"
+                                || segment_lower == "fixtures"
+                                || segment_lower == "examples"
+                        });
+                        Ok(is_test_file_name || path_has_test_segment)
+                    },
+                )
+                .unwrap_or(false)
+        });
+
     let calls_in_count: i32 = connection
         .query_row(
             "SELECT COUNT(*) FROM edges WHERE to_id = ?1 AND edge_type = 'CALLS'",
@@ -53,7 +105,11 @@ pub fn compute_connectivity(connection: &Connection, symbol_id: &SymbolId) -> i3
         |row| row.get(0),
     ).unwrap_or(0);
 
-    calls_in_count + calls_out_count + direct_imports_count + file_imports_count
+    if is_test {
+        calls_in_count + direct_imports_count
+    } else {
+        calls_in_count * 3 + direct_imports_count * 2 + file_imports_count + calls_out_count
+    }
 }
 
 #[cfg(test)]
@@ -122,11 +178,41 @@ mod tests {
             )
             .unwrap();
 
-        // Degree of A should be 4:
-        // - 1 incoming CALLS (C -> A)
-        // - 1 outgoing CALLS (A -> B)
-        // - 1 direct incoming IMPORTS (import_file -> A)
-        // - 1 file-level incoming IMPORTS (import_file -> file_a)
-        assert_eq!(compute_connectivity(&connection, &symbol_a), 4);
+        // Degree of A should be 7:
+        // - 1 incoming CALLS (C -> A) => 1 * 3 = 3
+        // - 1 direct incoming IMPORTS (import_file -> A) => 1 * 2 = 2
+        // - 1 file-level incoming IMPORTS (import_file -> file_a) => 1
+        // - 1 outgoing CALLS (A -> B) => 1
+        assert_eq!(compute_connectivity(&connection, &symbol_a), 7);
+
+        let symbol_test = SymbolId::from_parts("file_test.rs", "test_func", "Function");
+        connection
+            .execute(
+                "INSERT INTO symbols (id, file_id) VALUES (?1, ?2)",
+                [symbol_test.to_string(), "file_test.rs".to_string()],
+            )
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'CALLS')",
+                [symbol_c.to_string(), symbol_test.to_string()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'CALLS')",
+                [symbol_test.to_string(), symbol_b.to_string()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'IMPORTS')",
+                ["import_file.rs".to_string(), symbol_test.to_string()],
+            )
+            .unwrap();
+
+        // For a test symbol, score should be calls_in_count (1) + direct_imports_count (1) = 2.
+        assert_eq!(compute_connectivity(&connection, &symbol_test), 2);
     }
 }

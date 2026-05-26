@@ -19,7 +19,7 @@
 //! - `forge-crg::seed` — extracts the initial set of seed nodes
 //! - `forge-crg::render` — defines the returned structure and manifest format
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::str::FromStr;
 
 use rusqlite::Connection;
@@ -27,10 +27,13 @@ use yantra_core::SymbolId;
 use yantra_tokenizer::count_tokens;
 
 use crate::embedding::EmbeddingStore;
+use serde::{Deserialize, Serialize};
+
 use crate::render::{NodeProvenance, RenderedSubgraph, SubgraphManifest};
-use crate::seed::{SeedExtractor, SeedSource};
+use crate::seed::{is_test_symbol, SeedExtractor, SeedSource};
 
 /// One symbol row joined with its containing file path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolDetails {
     pub symbol_id: SymbolId,
     pub name: String,
@@ -41,9 +44,11 @@ pub struct SymbolDetails {
     pub connectivity_score: i32,
     pub file_path: String,
     pub file_id: String,
+    pub token_cost_with_docstring: usize,
+    pub token_cost_no_docstring: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EdgeDetails {
     pub from_id: String,
     pub to_id: String,
@@ -55,6 +60,7 @@ pub struct EdgeDetails {
 ///
 /// Build once after `GraphBuilder::build_from_repo`, then pass to every
 /// `extract_subgraph` call. Invalidate and rebuild after `update_file`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphCache {
     /// All symbol details keyed by `SymbolId`.
     pub symbol_details: HashMap<SymbolId, SymbolDetails>,
@@ -124,6 +130,28 @@ impl GraphCache {
                     .or_default()
                     .push(symbol_id.clone());
                 symbol_to_file_id.insert(symbol_id.clone(), file_id.clone());
+
+                let text_with_docstring = format_symbol_text(
+                    &file_path,
+                    &kind,
+                    signature.as_deref(),
+                    &name,
+                    docstring.as_deref(),
+                    true,
+                    "",
+                );
+                let text_no_docstring = format_symbol_text(
+                    &file_path,
+                    &kind,
+                    signature.as_deref(),
+                    &name,
+                    docstring.as_deref(),
+                    false,
+                    "",
+                );
+                let token_cost_with_docstring = count_tokens(&text_with_docstring);
+                let token_cost_no_docstring = count_tokens(&text_no_docstring);
+
                 symbol_details.insert(
                     symbol_id.clone(),
                     SymbolDetails {
@@ -136,6 +164,8 @@ impl GraphCache {
                         connectivity_score,
                         file_path,
                         file_id,
+                        token_cost_with_docstring,
+                        token_cost_no_docstring,
                     },
                 );
             }
@@ -183,6 +213,30 @@ impl GraphCache {
 /// # Errors
 ///
 /// Returns an error if seed extraction or embedding lookup fails.
+#[derive(Debug, Eq, PartialEq)]
+struct QueueItem {
+    symbol_id: SymbolId,
+    hop_distance: usize,
+    connectivity_score: i32,
+}
+
+impl Ord for QueueItem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // We want smaller hop_distance first, so compare other with self
+        other
+            .hop_distance
+            .cmp(&self.hop_distance)
+            // If hop_distance is the same, compare connectivity_score (higher first)
+            .then_with(|| self.connectivity_score.cmp(&other.connectivity_score))
+    }
+}
+
+impl PartialOrd for QueueItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 pub fn extract_subgraph(
     graph_cache: &GraphCache,
     embedding_store: &EmbeddingStore,
@@ -194,12 +248,16 @@ pub fn extract_subgraph(
         SeedExtractor::extract_seeds(graph_cache, embedding_store, task_description, forced_seeds)?;
 
     let mut node_provenances: HashMap<SymbolId, (Option<SeedSource>, usize)> = HashMap::new();
-    let mut queue: VecDeque<(SymbolId, usize)> = VecDeque::new();
+    let mut priority_queue: BinaryHeap<QueueItem> = BinaryHeap::new();
     let mut visited_symbols: HashSet<SymbolId> = HashSet::new();
 
     for (symbol_identifier, seed_source) in &seeds {
-        if graph_cache.symbol_details.contains_key(symbol_identifier) {
-            queue.push_back((symbol_identifier.clone(), 0));
+        if let Some(details) = graph_cache.symbol_details.get(symbol_identifier) {
+            priority_queue.push(QueueItem {
+                symbol_id: symbol_identifier.clone(),
+                hop_distance: 0,
+                connectivity_score: details.connectivity_score,
+            });
             visited_symbols.insert(symbol_identifier.clone());
             node_provenances.insert(symbol_identifier.clone(), (Some(*seed_source), 0));
         }
@@ -208,14 +266,18 @@ pub fn extract_subgraph(
     let mut candidate_symbols: HashSet<SymbolId> = HashSet::new();
     let mut candidate_edges: HashSet<EdgeDetails> = HashSet::new();
 
-    while let Some((current_symbol_id, current_hop)) = queue.pop_front() {
+    while let Some(QueueItem {
+        symbol_id: current_symbol_id,
+        hop_distance: current_hop,
+        ..
+    }) = priority_queue.pop()
+    {
         let symbol_details = match graph_cache.symbol_details.get(&current_symbol_id) {
             Some(details) => details,
             None => continue,
         };
 
-        let formatted_symbol = format_single_symbol(symbol_details, true);
-        let symbol_token_cost = count_tokens(&formatted_symbol);
+        let symbol_token_cost = symbol_details.token_cost_with_docstring;
 
         let is_forced = node_provenances
             .get(&current_symbol_id)
@@ -254,12 +316,19 @@ pub fn extract_subgraph(
                 };
 
                 if let Ok(neighbor_id) = SymbolId::from_str(&neighbor_id_string) {
-                    if graph_cache.symbol_details.contains_key(&neighbor_id) {
+                    if let Some(neighbor_details) = graph_cache.symbol_details.get(&neighbor_id) {
+                        if is_test_symbol(&neighbor_id, graph_cache) {
+                            continue;
+                        }
                         candidate_edges.insert(edge);
                         if !visited_symbols.contains(&neighbor_id) {
                             visited_symbols.insert(neighbor_id.clone());
                             node_provenances.insert(neighbor_id.clone(), (None, current_hop + 1));
-                            queue.push_back((neighbor_id, current_hop + 1));
+                            priority_queue.push(QueueItem {
+                                symbol_id: neighbor_id,
+                                hop_distance: current_hop + 1,
+                                connectivity_score: neighbor_details.connectivity_score,
+                            });
                         }
                     }
                 }
@@ -281,6 +350,7 @@ pub fn extract_subgraph(
             &active_symbols,
             &candidate_edges,
             &graph_cache.symbol_details,
+            &node_provenances,
             include_docstrings,
         );
 
@@ -304,7 +374,8 @@ pub fn extract_subgraph(
 
         if !pruneable_symbols.is_empty() {
             pruneable_symbols.sort_by_key(|details| details.connectivity_score);
-            if let Some(symbol_to_prune) = pruneable_symbols.first() {
+            let prune_count = (pruneable_symbols.len() / 10).max(1);
+            for symbol_to_prune in pruneable_symbols.iter().take(prune_count) {
                 pruned_symbols.insert(symbol_to_prune.symbol_id.clone());
             }
         } else if include_docstrings {
@@ -341,17 +412,25 @@ pub fn extract_subgraph(
     })
 }
 
-fn format_single_symbol(symbol: &SymbolDetails, include_docstring: bool) -> String {
-    let cleaned_kind = symbol.kind.trim_matches('"');
-    let mut rendered = format!("{} :: {cleaned_kind}", symbol.file_path);
-    if let Some(ref signature) = symbol.signature {
-        rendered.push_str(&format!(" {}({signature})", symbol.name));
+fn format_symbol_text(
+    file_path: &str,
+    kind: &str,
+    signature: Option<&str>,
+    name: &str,
+    docstring: Option<&str>,
+    include_docstring: bool,
+    provenance_prefix: &str,
+) -> String {
+    let cleaned_kind = kind.trim_matches('"');
+    let mut rendered = format!("{provenance_prefix}{file_path} :: {cleaned_kind}");
+    if let Some(sig) = signature {
+        rendered.push_str(&format!(" {name}({sig})"));
     } else {
-        rendered.push_str(&format!(" {}", symbol.name));
+        rendered.push_str(&format!(" {name}"));
     }
     if include_docstring {
-        if let Some(ref docstring) = symbol.docstring {
-            let first_line = docstring.lines().next().unwrap_or("").trim();
+        if let Some(doc) = docstring {
+            let first_line = doc.lines().next().unwrap_or("").trim();
             if !first_line.is_empty() {
                 rendered.push_str(&format!("  // {first_line}"));
             }
@@ -360,10 +439,27 @@ fn format_single_symbol(symbol: &SymbolDetails, include_docstring: bool) -> Stri
     rendered
 }
 
+fn format_single_symbol(
+    symbol: &SymbolDetails,
+    include_docstring: bool,
+    provenance_prefix: &str,
+) -> String {
+    format_symbol_text(
+        &symbol.file_path,
+        &symbol.kind,
+        symbol.signature.as_deref(),
+        &symbol.name,
+        symbol.docstring.as_deref(),
+        include_docstring,
+        provenance_prefix,
+    )
+}
+
 fn render_subgraph_text(
     symbols: &HashSet<SymbolId>,
     edges: &HashSet<EdgeDetails>,
     details_map: &HashMap<SymbolId, SymbolDetails>,
+    node_provenances: &HashMap<SymbolId, (Option<SeedSource>, usize)>,
     include_docstrings: bool,
 ) -> String {
     let mut file_groups: HashMap<String, Vec<&SymbolDetails>> = HashMap::new();
@@ -385,7 +481,25 @@ fn render_subgraph_text(
         if let Some(mut file_symbols) = file_groups.remove(&file_path) {
             file_symbols.sort_by_key(|symbol| symbol.start_line);
             for symbol in file_symbols {
-                let formatted = format_single_symbol(symbol, include_docstrings);
+                let (seed_source, hop_distance) = node_provenances
+                    .get(&symbol.symbol_id)
+                    .copied()
+                    .unwrap_or((None, 0));
+
+                let provenance_prefix = match seed_source {
+                    Some(source) => format!(
+                        "[SEED:{}, score:{}] ",
+                        source.as_str(),
+                        symbol.connectivity_score
+                    ),
+                    None => format!(
+                        "[hop:{}, score:{}] ",
+                        hop_distance, symbol.connectivity_score
+                    ),
+                };
+
+                let formatted =
+                    format_single_symbol(symbol, include_docstrings, &provenance_prefix);
                 rendered_output.push_str(&formatted);
                 rendered_output.push('\n');
             }

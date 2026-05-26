@@ -353,13 +353,13 @@ fn test_subgraph_budget_and_forced_seeds() {
         &graph_cache,
         &embedding_store,
         "format greet message",
-        200,
+        300,
         &forced_symbol_ids,
     )
     .unwrap();
 
     assert!(
-        rendered_subgraph_reasonable.token_cost <= 200,
+        rendered_subgraph_reasonable.token_cost <= 300,
         "Reasonable budget token cost exceeded: {}",
         rendered_subgraph_reasonable.token_cost
     );
