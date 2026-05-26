@@ -4766,10 +4766,13 @@ dependencies = [
 name = "yantra-lsp"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
- "yantra-ast",
+ "uuid",
  "yantra-core",
 ]
 
@@ -4912,10 +4915,12 @@ dependencies = [
 name = "yantra-tools"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "gix",
  "ring",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

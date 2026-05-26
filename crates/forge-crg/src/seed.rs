@@ -19,9 +19,11 @@
 //! - `forge-crg::subgraph` — consumes the extracted seeds to start BFS traversal
 
 use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use yantra_core::SymbolId;
+
 use crate::embedding::EmbeddingStore;
 use crate::subgraph::GraphCache;
 
@@ -47,9 +49,13 @@ pub struct SeedExtractor;
 impl SeedExtractor {
     /// Extracts seed symbols using three sequential strategies against the
     /// pre-loaded `GraphCache`. No OS threads are spawned; all lookups are
-    /// pure in-memory HashMap operations after the initial `embed_query` call.
+    /// pure in-memory `HashMap` operations after the initial `embed_query` call.
     ///
     /// Priority (highest wins on collision): Forced > Semantic > Name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the embedding store fails to embed the task description.
     pub fn extract_seeds(
         graph_cache: &GraphCache,
         embedding_store: &EmbeddingStore,

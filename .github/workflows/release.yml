@@ -25,6 +25,7 @@ jobs:
           - name: linux-aarch64
             os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            linker: gcc-aarch64-linux-gnu
           - name: macos-x86_64
             os: macos-latest
             target: x86_64-apple-darwin
@@ -34,24 +35,65 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Rust stable toolchain
         run: |
+          if ! command -v rustup &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --no-modify-path
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
           rustup update stable --no-self-update
           rustup default stable
           rustup target add ${{ matrix.target }}
         shell: bash
 
-      - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Install cross-compilation linker (Linux aarch64 only)
+        if: matrix.linker != ''
+        run: sudo apt-get install -y ${{ matrix.linker }}
+        shell: bash
 
-      - name: Build and upload binaries
-        uses: taiki-e/upload-rust-binary-action@v1
+      - name: Configure cross-compilation linker (Linux aarch64 only)
+        if: matrix.linker != ''
+        run: |
+          mkdir -p .cargo
+          printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' >> .cargo/config.toml
+        shell: bash
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
         with:
-          bin: yantra,yantra-sidecar,yantra-eval
-          target: ${{ matrix.target }}
-          archive: yantra-${{ matrix.name }}
-          tar: unix
-          zip: windows
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build release binaries
+        if: ${{ !env.ACT }}
+        run: cargo build --release --target ${{ matrix.target }} --bins
+        shell: bash
+
+      - name: Package archive (Unix)
+        if: ${{ !env.ACT }}
+        run: |
+          STAGING="yantra-${{ matrix.name }}"
+          mkdir "$STAGING"
+          for bin in yantra yantra-sidecar yantra-eval; do
+            src="target/${{ matrix.target }}/release/$bin"
+            [ -f "$src" ] && cp "$src" "$STAGING/"
+          done
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+          echo "ARCHIVE=${STAGING}.tar.gz" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Upload archive to release
+        if: ${{ !env.ACT && startsWith(github.ref, 'refs/tags/v') }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}" --clobber
+        shell: bash

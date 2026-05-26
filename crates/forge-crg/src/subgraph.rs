@@ -21,12 +21,14 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
+
 use rusqlite::Connection;
 use yantra_core::SymbolId;
 use yantra_tokenizer::count_tokens;
+
 use crate::embedding::EmbeddingStore;
-use crate::seed::{SeedExtractor, SeedSource};
 use crate::render::{NodeProvenance, RenderedSubgraph, SubgraphManifest};
+use crate::seed::{SeedExtractor, SeedSource};
 
 /// One symbol row joined with its containing file path.
 pub struct SymbolDetails {
@@ -67,14 +69,18 @@ pub struct GraphCache {
 }
 
 impl GraphCache {
-    /// Builds the full in-memory graph cache from the given SQLite connection.
+    /// Builds the full in-memory graph cache from the given `SQLite` connection.
     /// Runs two queries: one for symbols (joined with files), one for edges.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any `SQLite` query or row deserialization fails.
     pub fn build(sqlite_connection: &Connection) -> anyhow::Result<Self> {
         let mut select_symbols = sqlite_connection.prepare(
             "SELECT s.id, s.name, s.kind, s.start_line, s.signature, s.docstring,
                     s.connectivity_score, f.path, s.file_id
              FROM symbols s
-             JOIN files f ON s.file_id = f.id"
+             JOIN files f ON s.file_id = f.id",
         )?;
 
         let symbol_rows = select_symbols.query_map([], |row| {
@@ -97,28 +103,46 @@ impl GraphCache {
         let mut symbol_to_file_id: HashMap<SymbolId, String> = HashMap::new();
 
         for row_result in symbol_rows {
-            let (id_string, name, kind, start_line, signature, docstring, connectivity_score, file_path, file_id) = row_result?;
+            let (
+                id_string,
+                name,
+                kind,
+                start_line,
+                signature,
+                docstring,
+                connectivity_score,
+                file_path,
+                file_id,
+            ) = row_result?;
             if let Ok(symbol_id) = SymbolId::from_str(&id_string) {
-                symbols_by_name.entry(name.clone()).or_default().push(symbol_id.clone());
-                symbols_by_file_id.entry(file_id.clone()).or_default().push(symbol_id.clone());
+                symbols_by_name
+                    .entry(name.clone())
+                    .or_default()
+                    .push(symbol_id.clone());
+                symbols_by_file_id
+                    .entry(file_id.clone())
+                    .or_default()
+                    .push(symbol_id.clone());
                 symbol_to_file_id.insert(symbol_id.clone(), file_id.clone());
-                symbol_details.insert(symbol_id.clone(), SymbolDetails {
-                    symbol_id,
-                    name,
-                    kind,
-                    start_line,
-                    signature,
-                    docstring,
-                    connectivity_score,
-                    file_path,
-                    file_id,
-                });
+                symbol_details.insert(
+                    symbol_id.clone(),
+                    SymbolDetails {
+                        symbol_id,
+                        name,
+                        kind,
+                        start_line,
+                        signature,
+                        docstring,
+                        connectivity_score,
+                        file_path,
+                        file_id,
+                    },
+                );
             }
         }
 
-        let mut select_edges = sqlite_connection.prepare(
-            "SELECT from_id, to_id, edge_type, weight FROM edges"
-        )?;
+        let mut select_edges =
+            sqlite_connection.prepare("SELECT from_id, to_id, edge_type, weight FROM edges")?;
 
         let edge_rows = select_edges.query_map([], |row| {
             Ok(EdgeDetails {
@@ -132,8 +156,14 @@ impl GraphCache {
         let mut adjacency_index: HashMap<String, Vec<EdgeDetails>> = HashMap::new();
         for row_result in edge_rows {
             let edge = row_result?;
-            adjacency_index.entry(edge.from_id.clone()).or_default().push(edge.clone());
-            adjacency_index.entry(edge.to_id.clone()).or_default().push(edge);
+            adjacency_index
+                .entry(edge.from_id.clone())
+                .or_default()
+                .push(edge.clone());
+            adjacency_index
+                .entry(edge.to_id.clone())
+                .or_default()
+                .push(edge);
         }
 
         Ok(Self {
@@ -149,19 +179,19 @@ impl GraphCache {
 /// Extracts a token-budgeted subgraph for `task_description` from the pre-built
 /// `graph_cache`. All SQL I/O is performed during `GraphCache::build`; this
 /// function executes entirely in memory.
+///
+/// # Errors
+///
+/// Returns an error if seed extraction or embedding lookup fails.
 pub fn extract_subgraph(
     graph_cache: &GraphCache,
     embedding_store: &EmbeddingStore,
     task_description: &str,
     token_budget: usize,
-    forced_seeds: Vec<SymbolId>,
+    forced_seeds: &[SymbolId],
 ) -> anyhow::Result<RenderedSubgraph> {
-    let seeds = SeedExtractor::extract_seeds(
-        graph_cache,
-        embedding_store,
-        task_description,
-        &forced_seeds,
-    )?;
+    let seeds =
+        SeedExtractor::extract_seeds(graph_cache, embedding_store, task_description, forced_seeds)?;
 
     let mut node_provenances: HashMap<SymbolId, (Option<SeedSource>, usize)> = HashMap::new();
     let mut queue: VecDeque<(SymbolId, usize)> = VecDeque::new();
@@ -187,9 +217,9 @@ pub fn extract_subgraph(
         let formatted_symbol = format_single_symbol(symbol_details, true);
         let symbol_token_cost = count_tokens(&formatted_symbol);
 
-        let is_forced = node_provenances.get(&current_symbol_id)
-            .map(|provenance| provenance.0 == Some(SeedSource::Forced))
-            .unwrap_or(false);
+        let is_forced = node_provenances
+            .get(&current_symbol_id)
+            .is_some_and(|provenance| provenance.0 == Some(SeedSource::Forced));
 
         if !is_forced && symbol_token_cost > token_budget {
             continue;
@@ -200,7 +230,10 @@ pub fn extract_subgraph(
         if current_hop < 3 {
             let current_id_string = current_symbol_id.to_string();
             let empty_vec = Vec::new();
-            let neighbor_edges = graph_cache.adjacency_index.get(&current_id_string).unwrap_or(&empty_vec);
+            let neighbor_edges = graph_cache
+                .adjacency_index
+                .get(&current_id_string)
+                .unwrap_or(&empty_vec);
 
             let mut edges_list: Vec<EdgeDetails> = neighbor_edges.clone();
             edges_list.sort_by(|first, second| {
@@ -238,7 +271,8 @@ pub fn extract_subgraph(
     let mut include_docstrings = true;
 
     let (final_rendered_text, final_token_cost) = loop {
-        let active_symbols: HashSet<SymbolId> = candidate_symbols.iter()
+        let active_symbols: HashSet<SymbolId> = candidate_symbols
+            .iter()
             .filter(|symbol_id| !pruned_symbols.contains(*symbol_id))
             .cloned()
             .collect();
@@ -256,12 +290,13 @@ pub fn extract_subgraph(
             break (rendered_text, token_cost);
         }
 
-        let mut pruneable_symbols: Vec<&SymbolDetails> = candidate_symbols.iter()
+        let mut pruneable_symbols: Vec<&SymbolDetails> = candidate_symbols
+            .iter()
             .filter(|symbol_id| !pruned_symbols.contains(*symbol_id))
             .filter(|symbol_id| {
-                let is_seed = node_provenances.get(*symbol_id)
-                    .map(|provenance| provenance.0.is_some())
-                    .unwrap_or(false);
+                let is_seed = node_provenances
+                    .get(*symbol_id)
+                    .is_some_and(|provenance| provenance.0.is_some());
                 !is_seed
             })
             .filter_map(|symbol_id| graph_cache.symbol_details.get(symbol_id))
@@ -269,8 +304,9 @@ pub fn extract_subgraph(
 
         if !pruneable_symbols.is_empty() {
             pruneable_symbols.sort_by_key(|details| details.connectivity_score);
-            let symbol_to_prune = pruneable_symbols[0];
-            pruned_symbols.insert(symbol_to_prune.symbol_id.clone());
+            if let Some(symbol_to_prune) = pruneable_symbols.first() {
+                pruned_symbols.insert(symbol_to_prune.symbol_id.clone());
+            }
         } else if include_docstrings {
             include_docstrings = false;
         } else {
@@ -282,7 +318,8 @@ pub fn extract_subgraph(
     let mut manifest_provenance = Vec::new();
 
     for (symbol_id, (seed_source, hop_distance)) in node_provenances {
-        let retained = candidate_symbols.contains(&symbol_id) && !pruned_symbols.contains(&symbol_id);
+        let retained =
+            candidate_symbols.contains(&symbol_id) && !pruned_symbols.contains(&symbol_id);
         if retained {
             final_included_nodes.push(symbol_id.clone());
         }
@@ -298,15 +335,17 @@ pub fn extract_subgraph(
         text: final_rendered_text,
         included_nodes: final_included_nodes,
         token_cost: final_token_cost,
-        manifest: SubgraphManifest { nodes: manifest_provenance },
+        manifest: SubgraphManifest {
+            nodes: manifest_provenance,
+        },
     })
 }
 
 fn format_single_symbol(symbol: &SymbolDetails, include_docstring: bool) -> String {
     let cleaned_kind = symbol.kind.trim_matches('"');
-    let mut rendered = format!("{} :: {}", symbol.file_path, cleaned_kind);
+    let mut rendered = format!("{} :: {cleaned_kind}", symbol.file_path);
     if let Some(ref signature) = symbol.signature {
-        rendered.push_str(&format!(" {}({})", symbol.name, signature));
+        rendered.push_str(&format!(" {}({signature})", symbol.name));
     } else {
         rendered.push_str(&format!(" {}", symbol.name));
     }
@@ -314,7 +353,7 @@ fn format_single_symbol(symbol: &SymbolDetails, include_docstring: bool) -> Stri
         if let Some(ref docstring) = symbol.docstring {
             let first_line = docstring.lines().next().unwrap_or("").trim();
             if !first_line.is_empty() {
-                rendered.push_str(&format!("  // {}", first_line));
+                rendered.push_str(&format!("  // {first_line}"));
             }
         }
     }
@@ -330,7 +369,8 @@ fn render_subgraph_text(
     let mut file_groups: HashMap<String, Vec<&SymbolDetails>> = HashMap::new();
     for symbol_id in symbols {
         if let Some(details) = details_map.get(symbol_id) {
-            file_groups.entry(details.file_path.clone())
+            file_groups
+                .entry(details.file_path.clone())
                 .or_default()
                 .push(details);
         }
@@ -360,8 +400,11 @@ fn render_subgraph_text(
 
             if let (Some(from_id), Some(to_id)) = (from_symbol_id, to_symbol_id) {
                 if symbols.contains(&from_id) && symbols.contains(&to_id) {
-                    if let (Some(from_details), Some(to_details)) = (details_map.get(&from_id), details_map.get(&to_id)) {
-                        rendered_edges.push(format!("{} -calls→ {}", from_details.name, to_details.name));
+                    if let (Some(from_details), Some(to_details)) =
+                        (details_map.get(&from_id), details_map.get(&to_id))
+                    {
+                        rendered_edges
+                            .push(format!("{} -calls→ {}", from_details.name, to_details.name));
                     }
                 }
             }

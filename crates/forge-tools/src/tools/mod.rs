@@ -9,10 +9,12 @@
 //! - Project-root scoped runtime state
 //!
 //! ## Output
-//! - Filesystem and Git MCP responses
+//! - Filesystem, Git, CRG, and LSP MCP responses
 //!
 //! ## Related
 //! - `forge-tools::mcp` — shared routing and transport layer
 
+pub mod crg;
 pub mod fs;
 pub mod git;
+pub mod lsp;

@@ -1,14 +1,14 @@
 //! # Code-Review Graph: Database Schema and Migrations
 //!
-//! Defines the SQLite tables, indices, and database migration lifecycle for the
+//! Defines the `SQLite` tables, indices, and database migration lifecycle for the
 //! Code-Review Graph. This schema integrates AST-derived symbols with relational
 //! call edges and temporary model session facts.
 //!
 //! ## Input
-//! - Active SQLite database connection
+//! - Active `SQLite` database connection
 //!
 //! ## Output
-//! - SQLite table structures and indices created in the target database
+//! - `SQLite` table structures and indices created in the target database
 //!
 //! ## Related
 //! - `forge-ast::db` — provides the base symbol/file/call schema definitions
@@ -82,6 +82,11 @@ CREATE INDEX IF NOT EXISTS idx_facts_subject ON graph_facts(subject);
 CREATE INDEX IF NOT EXISTS idx_facts_validity ON graph_facts(valid_from, valid_until);
 ";
 
+/// Creates all CRG tables and indexes in `connection` using `CRG_SCHEMA_SQL`.
+///
+/// # Errors
+///
+/// Returns an error if `execute_batch` fails (e.g., corrupt database or locked file).
 pub fn create_crg_schema(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(CRG_SCHEMA_SQL)?;
     Ok(())

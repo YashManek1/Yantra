@@ -26,5 +26,7 @@ pub use error::{McpError, ToolsError, ToolsResult};
 pub use mcp::{
     JsonRpcErrorObject, JsonRpcRequest, JsonRpcResponse, McpRouter, McpServer, ToolCapability,
 };
+pub use tools::crg::CrgMcpServer;
 pub use tools::fs::FsMcpServer;
 pub use tools::git::GitMcpServer;
+pub use tools::lsp::LspMcpServer;

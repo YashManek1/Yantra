@@ -460,8 +460,8 @@ fn encode_hex(bytes: &[u8]) -> String {
     const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        encoded.push(HEX_CHARS[(byte >> 4) as usize] as char);
-        encoded.push(HEX_CHARS[(byte & 0x0f) as usize] as char);
+        encoded.push(HEX_CHARS[usize::from(byte >> 4)] as char);
+        encoded.push(HEX_CHARS[usize::from(byte & 0x0f)] as char);
     }
     encoded
 }

@@ -24,14 +24,13 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
-
-use yantra_core::{ModelTier, ProjectRoot, SessionId, Span, SpanId, TaskId, Outcome, AgentKind};
-use yantra_router::{
-    CompletionRequest, Message, MessageRole, Router, RoutingPolicy,
-    OllamaProvider, OpenRouterProvider, GitHubModelsProvider, ModelProvider,
-};
+use yantra_core::{AgentKind, ModelTier, Outcome, ProjectRoot, SessionId, Span, SpanId, TaskId};
+use yantra_obs::{init_tracing, record_span, CostThresholds, TracingConfig};
 use yantra_router::routing::RoutedCompletionRequest;
-use yantra_obs::{CostThresholds, init_tracing, record_span, TracingConfig};
+use yantra_router::{
+    CompletionRequest, GitHubModelsProvider, Message, MessageRole, ModelProvider, OllamaProvider,
+    OpenRouterProvider, Router, RoutingPolicy,
+};
 
 #[derive(Debug, Deserialize)]
 struct RoutingConfig {
@@ -66,7 +65,11 @@ struct BudgetConfig {
 }
 
 #[derive(Parser)]
-#[command(name = "yantra", version = "0.1.0", about = "Yantra: Agentic Coding Runtime")]
+#[command(
+    name = "yantra",
+    version = "0.1.0",
+    about = "Yantra: Agentic Coding Runtime"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -96,18 +99,28 @@ fn add_providers_from_config(
 ) {
     for config_entry in config_entries {
         if config_entry.kind == "ollama" {
-            let endpoint = config_entry.base_url.as_deref().unwrap_or("http://localhost:11434");
+            let endpoint = config_entry
+                .base_url
+                .as_deref()
+                .unwrap_or("http://localhost:11434");
             let provider = OllamaProvider::with_endpoint(&config_entry.default_model, endpoint);
             model_providers.push(Arc::new(provider));
         } else if config_entry.kind == "openrouter" {
-            let endpoint = config_entry.base_url.as_deref().unwrap_or("https://openrouter.ai/api/v1/chat/completions");
+            let endpoint = config_entry
+                .base_url
+                .as_deref()
+                .unwrap_or("https://openrouter.ai/api/v1/chat/completions");
             let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
             let provider = OpenRouterProvider::new(api_key, &config_entry.default_model, endpoint);
             model_providers.push(Arc::new(provider));
         } else if config_entry.kind == "github_models" {
-            let endpoint = config_entry.base_url.as_deref().unwrap_or("https://models.inference.ai.azure.com/chat/completions");
+            let endpoint = config_entry
+                .base_url
+                .as_deref()
+                .unwrap_or("https://models.inference.ai.azure.com/chat/completions");
             let api_key = std::env::var("GITHUB_TOKEN").unwrap_or_default();
-            let provider = GitHubModelsProvider::new(api_key, &config_entry.default_model, endpoint);
+            let provider =
+                GitHubModelsProvider::new(api_key, &config_entry.default_model, endpoint);
             model_providers.push(Arc::new(provider));
         }
     }
@@ -170,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Index { path } => {
             let target_path_str = path.unwrap_or_else(|| ".".to_string());
             let target_path = PathBuf::from(target_path_str);
-            println!("Building symbol index for path: {:?}", target_path);
+            println!("Building symbol index for path: {target_path:?}");
 
             let crg_database_path = project_root.as_path().join(".yantra").join("crg.sqlite");
             if let Some(parent_directory) = crg_database_path.parent() {
@@ -178,8 +191,9 @@ async fn main() -> anyhow::Result<()> {
             }
             let database_connection = rusqlite::Connection::open(&crg_database_path)?;
 
-            let indexed_symbols_count = index_directory_symbols(&target_path, &database_connection)?;
-            println!("Successfully indexed {} symbols.", indexed_symbols_count);
+            let indexed_symbols_count =
+                index_directory_symbols(&target_path, &database_connection)?;
+            println!("Successfully indexed {indexed_symbols_count} symbols.");
         }
         Commands::Ask { question } => {
             let message = Message {
@@ -203,17 +217,20 @@ async fn main() -> anyhow::Result<()> {
 
             let start_instant = std::time::Instant::now();
             let completion_response = provider.complete(routed_request.completion_request).await?;
-            let duration_milliseconds = u64::try_from(start_instant.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let duration_milliseconds =
+                u64::try_from(start_instant.elapsed().as_millis()).unwrap_or(u64::MAX);
 
             println!("{}", completion_response.content);
 
             let cost_per_thousand_input = provider.capability().cost_per_1k_in;
             let cost_per_thousand_output = provider.capability().cost_per_1k_out;
-            let input_cost = (completion_response.tokens_in as f64 / 1000.0) * cost_per_thousand_input as f64;
-            let output_cost = (completion_response.tokens_out as f64 / 1000.0) * cost_per_thousand_output as f64;
+            let input_cost = (completion_response.tokens_in as f64 / 1000.0)
+                * f64::from(cost_per_thousand_input);
+            let output_cost = (completion_response.tokens_out as f64 / 1000.0)
+                * f64::from(cost_per_thousand_output);
             let total_call_cost = input_cost + output_cost;
 
-            println!("Cost: ${:.6}", total_call_cost);
+            println!("Cost: ${total_call_cost:.6}");
 
             // Record this model execution span in the trace database
             let trace_database_path = project_root.as_path().join(".yantra").join("traces.sqlite");
@@ -281,21 +298,21 @@ async fn main() -> anyhow::Result<()> {
                 };
 
                 // Print session information
-                println!("Active Session: {}", parsed_session_id);
-                println!("Total Spans: {}", spans_count);
-                println!("Cumulative Cost: ${:.6}", total_cost);
+                println!("Active Session: {parsed_session_id}");
+                println!("Total Spans: {spans_count}");
+                println!("Cumulative Cost: ${total_cost:.6}");
 
                 // Cost status classification
-                let status_label = if total_cost >= cost_thresholds.kill as f64 {
+                let status_label = if total_cost >= f64::from(cost_thresholds.kill) {
                     "Kill"
-                } else if total_cost >= cost_thresholds.hard as f64 {
+                } else if total_cost >= f64::from(cost_thresholds.hard) {
                     "Pause"
-                } else if total_cost >= cost_thresholds.soft as f64 {
+                } else if total_cost >= f64::from(cost_thresholds.soft) {
                     "Warn"
                 } else {
                     "Ok"
                 };
-                println!("Status: {}", status_label);
+                println!("Status: {status_label}");
             } else {
                 println!("No spans found in traces database.");
                 println!("Cumulative Cost: $0.000000");
@@ -310,7 +327,10 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn index_directory_symbols(path: &Path, connection: &rusqlite::Connection) -> anyhow::Result<usize> {
+fn index_directory_symbols(
+    path: &Path,
+    connection: &rusqlite::Connection,
+) -> anyhow::Result<usize> {
     let mut total_indexed_symbols = 0;
 
     if path.is_file() {
@@ -330,7 +350,10 @@ fn index_directory_symbols(path: &Path, connection: &rusqlite::Connection) -> an
             let child_path = directory_entry.path();
 
             if let Some(file_name_str) = child_path.file_name().and_then(|name| name.to_str()) {
-                if file_name_str.starts_with('.') || file_name_str == "target" || file_name_str == "node_modules" {
+                if file_name_str.starts_with('.')
+                    || file_name_str == "target"
+                    || file_name_str == "node_modules"
+                {
                     continue;
                 }
             }

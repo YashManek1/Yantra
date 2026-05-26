@@ -1,0 +1,12 @@
+[alias]
+# Run all workspace lints as warnings (CI check equivalent)
+lint = ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+
+# Auto-fix clippy lints where machine-applicable
+lint-fix = ["clippy", "--workspace", "--all-targets", "--fix", "--allow-dirty", "--allow-staged"]
+
+# Run all workspace unit and integration tests using cargo-nextest
+test-all = ["nextest", "run", "--workspace"]
+
+# Run docs builds with warnings-as-errors (RUSTDOCFLAGS is still required for warnings-as-errors)
+doc-check = ["doc", "--workspace", "--no-deps"]
