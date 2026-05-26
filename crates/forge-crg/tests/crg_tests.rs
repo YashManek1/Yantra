@@ -310,7 +310,9 @@ fn test_subgraph_budget_and_forced_seeds() {
     let graph_builder = GraphBuilder::new(sqlite_connection);
     graph_builder.build_from_repo(&temp_directory).unwrap();
 
-    let _lock_guard = EMBEDDING_INIT_MUTEX.lock().unwrap();
+    let _lock_guard = EMBEDDING_INIT_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let embedding_store = EmbeddingStore::new().unwrap();
     embedding_store
         .embed_all(graph_builder.connection())
@@ -377,7 +379,9 @@ fn test_subgraph_golden_corpus_recall() {
     let graph_builder = GraphBuilder::new(sqlite_connection);
     graph_builder.build_from_repo(&temp_directory).unwrap();
 
-    let _lock_guard = EMBEDDING_INIT_MUTEX.lock().unwrap();
+    let _lock_guard = EMBEDDING_INIT_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let embedding_store = EmbeddingStore::new().unwrap();
     embedding_store
         .embed_all(graph_builder.connection())
@@ -446,6 +450,98 @@ fn test_subgraph_golden_corpus_recall() {
         total_matched_symbols * 10 >= total_expected_symbols * 9,
         "Golden corpus recall target (>90%) not met: {total_matched_symbols}/{total_expected_symbols} symbols matched",
     );
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_proximity_aware_pruning_correctness() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory =
+        std::env::temp_dir().join(format!("yantra-crg-proximity-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let _lock_guard = EMBEDDING_INIT_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let embedding_store = EmbeddingStore::new().unwrap();
+    embedding_store
+        .embed_all(graph_builder.connection())
+        .unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+
+    let mut select_statement = graph_builder
+        .connection()
+        .prepare("SELECT id, name FROM symbols")
+        .unwrap();
+    let symbol_records: Vec<(SymbolId, String)> = select_statement
+        .query_map([], |row| {
+            let id_string: String = row.get(0)?;
+            let name_string: String = row.get(1)?;
+            Ok((yantra_core::SymbolId::new(id_string).unwrap(), name_string))
+        })
+        .unwrap()
+        .map(|row_result| row_result.unwrap())
+        .collect();
+
+    println!(
+        "All indexed symbols: {:?}",
+        symbol_records
+            .iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>()
+    );
+
+    let main_symbol_id = symbol_records
+        .iter()
+        .find(|(_, name)| name == "main")
+        .map(|(id, _)| id.clone())
+        .unwrap();
+
+    let format_message_id = symbol_records
+        .iter()
+        .find(|(_, name)| name == "format_message")
+        .map(|(id, _)| id.clone())
+        .unwrap();
+
+    let greeter_symbol_id = symbol_records
+        .iter()
+        .find(|(_, name)| name == "Greeter")
+        .map(|(id, _)| id.clone())
+        .unwrap();
+
+    let rendered_subgraph_small_budget = extract_subgraph(
+        &graph_cache,
+        &embedding_store,
+        "run main entry point",
+        200,
+        &[main_symbol_id.clone()],
+    )
+    .unwrap();
+
+    assert!(
+        rendered_subgraph_small_budget
+            .included_nodes
+            .contains(&main_symbol_id),
+        "Expected seed symbol main to be included"
+    );
+
+    if rendered_subgraph_small_budget
+        .included_nodes
+        .contains(&format_message_id)
+    {
+        assert!(
+            rendered_subgraph_small_budget
+                .included_nodes
+                .contains(&greeter_symbol_id),
+            "Expected hop-1 Greeter to be retained if hop-2 format_message is retained"
+        );
+    }
 
     fs::remove_dir_all(&temp_directory).unwrap();
 }

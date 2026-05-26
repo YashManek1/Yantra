@@ -306,9 +306,9 @@ impl GraphBuilder {
         let mut update_statement = self.connection.prepare(
             "UPDATE symbols
              SET connectivity_score = (
-                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'CALLS') +
-                 (SELECT COUNT(*) FROM edges WHERE from_id = symbols.id AND edge_type = 'CALLS') +
-                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'IMPORTS') +
+                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'CALLS') * 2 +
+                 (SELECT COUNT(*) FROM edges WHERE from_id = symbols.id AND edge_type = 'CALLS') * 2 +
+                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'IMPORTS') * 2 +
                  (SELECT COUNT(*) FROM edges WHERE to_id = symbols.file_id AND edge_type = 'IMPORTS')
              )
              WHERE id = ?1"
@@ -562,9 +562,9 @@ impl GraphBuilder {
         self.connection.execute(
             "UPDATE symbols
              SET connectivity_score = (
-                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'CALLS') +
-                 (SELECT COUNT(*) FROM edges WHERE from_id = symbols.id AND edge_type = 'CALLS') +
-                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'IMPORTS') +
+                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'CALLS') * 2 +
+                 (SELECT COUNT(*) FROM edges WHERE from_id = symbols.id AND edge_type = 'CALLS') * 2 +
+                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'IMPORTS') * 2 +
                  (SELECT COUNT(*) FROM edges WHERE to_id = symbols.file_id AND edge_type = 'IMPORTS')
              )",
             [],

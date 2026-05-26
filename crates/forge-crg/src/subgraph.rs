@@ -308,7 +308,7 @@ pub fn extract_subgraph(
                 }
             });
 
-            for edge in edges_list {
+            for edge in edges_list.into_iter().take(10) {
                 let neighbor_id_string = if edge.from_id == current_id_string {
                     edge.to_id.clone()
                 } else {
@@ -373,7 +373,20 @@ pub fn extract_subgraph(
             .collect();
 
         if !pruneable_symbols.is_empty() {
-            pruneable_symbols.sort_by_key(|details| details.connectivity_score);
+            pruneable_symbols.sort_by(|first_details, second_details| {
+                let first_hop_distance = node_provenances
+                    .get(&first_details.symbol_id)
+                    .map_or(0, |(_, hop)| *hop);
+                let second_hop_distance = node_provenances
+                    .get(&second_details.symbol_id)
+                    .map_or(0, |(_, hop)| *hop);
+
+                second_hop_distance.cmp(&first_hop_distance).then_with(|| {
+                    first_details
+                        .connectivity_score
+                        .cmp(&second_details.connectivity_score)
+                })
+            });
             let prune_count = (pruneable_symbols.len() / 10).max(1);
             for symbol_to_prune in pruneable_symbols.iter().take(prune_count) {
                 pruned_symbols.insert(symbol_to_prune.symbol_id.clone());

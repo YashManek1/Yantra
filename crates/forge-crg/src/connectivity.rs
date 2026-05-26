@@ -108,7 +108,7 @@ pub fn compute_connectivity(connection: &Connection, symbol_id: &SymbolId) -> i3
     if is_test {
         calls_in_count + direct_imports_count
     } else {
-        calls_in_count * 3 + direct_imports_count * 2 + file_imports_count + calls_out_count
+        calls_in_count * 2 + direct_imports_count * 2 + file_imports_count + calls_out_count * 2
     }
 }
 
@@ -179,10 +179,10 @@ mod tests {
             .unwrap();
 
         // Degree of A should be 7:
-        // - 1 incoming CALLS (C -> A) => 1 * 3 = 3
+        // - 1 incoming CALLS (C -> A) => 1 * 2 = 2
         // - 1 direct incoming IMPORTS (import_file -> A) => 1 * 2 = 2
         // - 1 file-level incoming IMPORTS (import_file -> file_a) => 1
-        // - 1 outgoing CALLS (A -> B) => 1
+        // - 1 outgoing CALLS (A -> B) => 1 * 2 = 2
         assert_eq!(compute_connectivity(&connection, &symbol_a), 7);
 
         let symbol_test = SymbolId::from_parts("file_test.rs", "test_func", "Function");

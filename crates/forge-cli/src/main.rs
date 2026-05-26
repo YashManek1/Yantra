@@ -292,8 +292,10 @@ async fn main() -> anyhow::Result<()> {
                  2. Trace the connection/flow from seed symbols to the insertion point using \
                  only the edges listed at the bottom of the subgraph (X -calls→ Y).\n\
                  3. State your answer with the exact file path and symbol name as shown in the \
-                 subgraph. If the subgraph does not contain enough information to answer \
-                 definitively, say so explicitly rather than inventing an answer."
+                 subgraph. If the exact insertion point is not present in the subgraph, identify \
+                 the closest visible parent module or related struct and suggest where the new \
+                 code should reside relative to that visible structure, marking your answer clearly \
+                 as \"Context-Inferred\". Do not completely refuse if related structural seeds are present."
             );
 
             let messages = vec![
