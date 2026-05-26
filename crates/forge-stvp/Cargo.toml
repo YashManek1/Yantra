@@ -14,7 +14,12 @@ yantra-memory.workspace = true
 thiserror.workspace     = true
 tracing.workspace       = true
 serde.workspace         = true
+serde_yaml.workspace    = true
 uuid.workspace          = true
+chrono.workspace        = true
+ring.workspace          = true
+regex.workspace         = true
+rusqlite.workspace      = true
 
 [lints]
 workspace = true
