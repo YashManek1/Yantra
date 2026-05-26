@@ -50,7 +50,7 @@ struct MockCrgServer;
 
 #[async_trait]
 impl McpServer for MockCrgServer {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "crg"
     }
 
