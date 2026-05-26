@@ -8,11 +8,18 @@ license.workspace   = true
 publish             = false
 
 [dependencies]
-yantra-core.workspace = true
-yantra-obs.workspace  = true
-thiserror.workspace   = true
-tracing.workspace     = true
-serde.workspace       = true
+yantra-core.workspace      = true
+yantra-tokenizer.workspace = true
+yantra-obs.workspace       = true
+thiserror.workspace        = true
+tracing.workspace          = true
+serde.workspace            = true
+serde_json.workspace       = true
+rusqlite.workspace         = true
+chrono.workspace           = true
+uuid.workspace             = true
+tokio.workspace            = true
+ring.workspace             = true
 
 [lints]
 workspace = true
