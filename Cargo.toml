@@ -29,7 +29,7 @@ version      = "0.1.0"
 edition      = "2021"
 authors      = ["Sankalp Systems <hello@sankalp.systems>"]
 license      = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.86"
 
 # ---------------------------------------------------------------------------
 # Workspace-level dependency versions — crates inherit with `.workspace = true`
@@ -72,6 +72,7 @@ clap               = { version = "4",    features = ["derive"] }
 proptest           = "1"
 ring               = "0.17"
 parking_lot        = "0.12"
+async-trait        = "0.1"
 
 # ---------------------------------------------------------------------------
 # Lint configuration — individual crates inherit with `[lints] workspace = true`
