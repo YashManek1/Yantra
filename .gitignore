@@ -6,3 +6,14 @@
 
 # Added by code-review-graph
 .code-review-graph/
+Yantra-obsidian/
+.mcp.json
+AGENTS.md
+architecture.md
+CLAUDE.md
+prompts.md
+yantra_ideation.md
+yantra_v2_elevation.md
+.codex
+.claude
+.agents

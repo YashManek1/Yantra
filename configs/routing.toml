@@ -1,0 +1,17 @@
+[[providers.tier0]]
+kind = "ollama"
+base_url = "http://localhost:11434"
+default_model = "qwen2.5-coder:7b"
+
+[[providers.tier1]]
+kind = "openrouter"
+default_model = "openrouter/auto"
+
+[[providers.tier1]]
+kind = "github_models"
+default_model = "openai/gpt-4o-mini"
+
+[budget]
+soft_usd = 1.0
+hard_usd = 5.0
+kill_usd = 20.0
