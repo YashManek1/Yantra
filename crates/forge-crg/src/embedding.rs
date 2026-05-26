@@ -38,9 +38,23 @@ impl EmbeddingStore {
     ///
     /// Returns an error if the fastembed model fails to initialise.
     pub fn new() -> anyhow::Result<Self> {
-        let embedding_model = TextEmbedding::try_new(
-            InitOptions::new(EmbeddingModel::BGESmallENV15).with_show_download_progress(false),
-        )?;
+        let mut attempts = 0;
+        let embedding_model = loop {
+            match TextEmbedding::try_new(
+                InitOptions::new(EmbeddingModel::BGESmallENV15).with_show_download_progress(false),
+            ) {
+                Ok(model) => break model,
+                Err(error) => {
+                    attempts += 1;
+                    if attempts >= 10 {
+                        return Err(anyhow::anyhow!(
+                            "Failed to initialise TextEmbedding after 10 attempts: {error}"
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            }
+        };
         Ok(Self {
             embedding_model,
             query_cache: Mutex::new(HashMap::new()),
