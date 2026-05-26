@@ -176,7 +176,10 @@ fn render_history(turns: &[ConversationTurn]) -> String {
     summarized_turns.join("\n")
 }
 
-fn build_result(sections: &[PromptSection], sections_dropped: Vec<&'static str>) -> AssembledPrompt {
+fn build_result(
+    sections: &[PromptSection],
+    sections_dropped: Vec<&'static str>,
+) -> AssembledPrompt {
     let assembled_text = sections
         .iter()
         .map(|section| section.content.as_str())

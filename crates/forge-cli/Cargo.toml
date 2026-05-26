@@ -16,6 +16,8 @@ yantra-core.workspace         = true
 yantra-serve.workspace        = true
 yantra-night.workspace        = true
 yantra-orchestrator.workspace = true
+yantra-stvp.workspace         = true
+yantra-agents.workspace       = true
 yantra-router.workspace       = true
 yantra-ast.workspace          = true
 yantra-crg.workspace          = true
@@ -30,6 +32,7 @@ tokio.workspace               = true
 rusqlite.workspace            = true
 chrono.workspace              = true
 serde_json.workspace          = true
+inquire.workspace             = true
 
 [lints]
 workspace = true

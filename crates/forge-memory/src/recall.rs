@@ -367,16 +367,13 @@ pub fn summarize_completed_sessions(recall_store: &RecallStore) -> MemoryResult<
 
 fn build_turn_summary(turns: &[ConversationTurn]) -> String {
     let turn_count = turns.len();
-    let first_content_preview: &str = turns
-        .first()
-        .map_or("", |turn| turn.content.as_str());
+    let first_content_preview: &str = turns.first().map_or("", |turn| turn.content.as_str());
     let preview_length = first_content_preview.len().min(120);
     format!(
         "Session with {turn_count} turns. First message: \"{}…\"",
         &first_content_preview[..preview_length]
     )
 }
-
 
 #[cfg(test)]
 mod tests {

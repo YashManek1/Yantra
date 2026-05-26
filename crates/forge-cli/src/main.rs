@@ -17,6 +17,8 @@
 //! - `forge-night` — starts Night Mode on `yantra night`
 //! - `forge-serve` — optionally launched for the Live Canvas UI
 
+mod commands;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -86,6 +88,11 @@ enum Commands {
     Ask {
         /// The question to send to the routed LLM
         question: String,
+    },
+    /// Runs the full STVP pipeline for a task description
+    Run {
+        /// Natural-language task description
+        description: String,
     },
     /// Prints cost gauge and active session info
     Status,
@@ -179,6 +186,9 @@ async fn main() -> anyhow::Result<()> {
     let router = Router::new(routing_policy, model_providers);
 
     match cli_arguments.command {
+        Commands::Run { description } => {
+            commands::run::run_command(description, project_root, Arc::new(router)).await?;
+        }
         Commands::Index { path } => {
             let target_path_str = path.unwrap_or_else(|| ".".to_string());
             let target_path = PathBuf::from(target_path_str);
