@@ -2,7 +2,7 @@
 //!
 //! Contains the event loops for every specialist agent role: Coder, Tester,
 //! Researcher, Refactorer, Committer, and Red Team. Each agent receives a
-//! task assignment from the orchestrator, queries the CRG for context, calls
+//! task assignment from the orchestrator, queries the `CRG` for context, calls
 //! the model through the router, and routes its output through the verifier.
 //!
 //! ## Input
@@ -17,5 +17,5 @@
 //!
 //! ## Related
 //! - `forge-router` — all LLM calls route through the model router
-//! - `forge-tools` — agents invoke MCP tools via this crate
+//! - `forge-tools` — agents invoke `MCP` tools via this crate
 //! - `forge-verifier` — every diff passes through the three gates

@@ -16,6 +16,6 @@
 //! - Mistake-prevention rules forwarded to the prompt assembler
 //!
 //! ## Related
-//! - `forge-obs` — provides the SQLite helpers and span substrate
+//! - `forge-obs` — provides the `SQLite` helpers and span substrate
 //! - `forge-stvp` — reads/writes Truth Vault entries
 //! - `forge-agents` — every agent loop reads from and writes to memory

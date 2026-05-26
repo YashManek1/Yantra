@@ -1,0 +1,46 @@
+name: Nightly Evaluation
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  NIGHTLY_TRACKING_ISSUE: "1"
+
+jobs:
+  swebench-placeholder:
+    name: SWE-bench Verified Placeholder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run forge-eval placeholder
+        run: |
+          cargo run --bin yantra-eval -- --placeholder swe-bench-verified > nightly-results.md
+          {
+            echo "## Nightly SWE-bench Verified Placeholder"
+            echo
+            echo "Workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '```text'
+            cat nightly-results.md
+            echo '```'
+          } > nightly-comment.md
+
+      - name: Post results to tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh issue comment "$NIGHTLY_TRACKING_ISSUE" --body-file nightly-comment.md

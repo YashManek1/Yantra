@@ -1,19 +1,19 @@
-//! # forge-tools: MCP Tool Layer
+//! # forge-tools: `MCP` Tool Layer
 //!
-//! Implements all MCP servers that specialist agents are permitted to call:
+//! Implements all `MCP` servers that specialist agents are permitted to call:
 //! filesystem reads/writes, shell execution, Git operations (via gitoxide),
-//! CRG queries, LSP lookups, Knowledge Graph mutations, and browser control.
+//! `CRG` queries, `LSP` lookups, Knowledge Graph mutations, and browser control.
 //!
 //! ## Input
-//! - Incoming MCP JSON-RPC requests from agent processes
+//! - Incoming `MCP` `JSON-RPC` requests from agent processes
 //! - Per-agent capability declarations from `configs/agents.toml`
 //!
 //! ## Output
-//! - MCP JSON-RPC responses returned to the requesting agent
+//! - `MCP` `JSON-RPC` responses returned to the requesting agent
 //! - Audit records written to the decision log via `forge-obs`
 //!
 //! ## Related
-//! - `forge-crg` — CRG query tool delegates here
-//! - `forge-lsp` — LSP tool delegates here
+//! - `forge-crg` — `CRG` query tool delegates here
+//! - `forge-lsp` — `LSP` tool delegates here
 //! - `forge-memory` — memory read/write tools delegate here
 //! - `forge-agents` — consumers of every tool in this crate

@@ -1,6 +1,6 @@
-//! # forge-federation: Cross-Repository CRG Meta-Graph (Wave 2)
+//! # forge-federation: Cross-Repository `CRG` Meta-Graph (Wave 2)
 //!
-//! Stitches per-repository CRG instances into a unified meta-graph that
+//! Stitches per-repository `CRG` instances into a unified meta-graph that
 //! enables multi-repo reasoning: cross-repo impact analysis, semantic merges
 //! across repository boundaries, and federated subgraph extraction for tasks
 //! that span more than one codebase.
@@ -14,5 +14,5 @@
 //! - Cross-repo `ImpactReport` — blast radius spanning repository boundaries
 //!
 //! ## Related
-//! - `forge-crg` — each member-repo CRG feeds into the meta-graph
+//! - `forge-crg` — each member-repo `CRG` feeds into the meta-graph
 //! - `forge-swarm` — federation queries are distributed across workers

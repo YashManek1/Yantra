@@ -1,6 +1,6 @@
-//! # forge-tokenizer: BPE Token Counter and Budget Enforcer
+//! # forge-tokenizer: `BPE` Token Counter and Budget Enforcer
 //!
-//! Counts tokens using a BPE vocabulary and enforces hard budget limits
+//! Counts tokens using a `BPE` vocabulary and enforces hard budget limits
 //! before any text is forwarded to a model. All context-assembly paths
 //! in Yantra pass through this crate to prevent overruns.
 //!

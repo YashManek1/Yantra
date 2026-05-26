@@ -6,7 +6,7 @@
 //!
 //! ## Input
 //! - CLI arguments: subcommand (index, ask, run, night), flags, and options
-//! - Interactive terminal input during STVP questionnaires
+//! - Interactive terminal input during `STVP` questionnaires
 //!
 //! ## Output
 //! - Terminal UI rendered via ratatui

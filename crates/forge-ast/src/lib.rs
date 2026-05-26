@@ -1,8 +1,8 @@
-//! # forge-ast: Tree-sitter AST Wrapper and Symbol Extractor
+//! # forge-ast: Tree-sitter `AST` Wrapper and Symbol Extractor
 //!
 //! Wraps Tree-sitter grammars for Rust, Python, TypeScript, and Go to
 //! extract typed symbol records from source files. Persists extracted
-//! symbols to the CRG SQLite database via `forge-crg`.
+//! symbols to the `CRG` `SQLite` database via `forge-crg`.
 //!
 //! ## Input
 //! - Source file paths and their byte content
@@ -14,5 +14,5 @@
 //!
 //! ## Related
 //! - `forge-crg` — consumes symbols to build graph nodes and edges
-//! - `forge-lsp` — cross-checks AST results against LSP diagnostics
+//! - `forge-lsp` — cross-checks `AST` results against `LSP` diagnostics
 //! - `forge-sidecar` — triggers incremental re-parses on file save

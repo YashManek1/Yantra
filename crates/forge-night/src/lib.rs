@@ -1,8 +1,8 @@
 //! # forge-night: Night Mode Runtime
 //!
 //! Implements the three-phase autonomous execution loop: Twilight (front-load
-//! STVP for all planned tasks, build decision rules with the user), Night Run
-//! (execute the approved DAG without approval gates, checkpoint every 30s),
+//! `STVP` for all planned tasks, build decision rules with the user), Night Run
+//! (execute the approved `DAG` without approval gates, checkpoint every 30s),
 //! and Dawn Digest (generate a markdown report and trigger the Postmortem).
 //!
 //! ## Input
@@ -16,5 +16,5 @@
 //! - Postmortem snippets forwarded to `forge-memory` Mistake Library
 //!
 //! ## Related
-//! - `forge-orchestrator` — Night Run drives the DAG scheduler
+//! - `forge-orchestrator` — Night Run drives the `DAG` scheduler
 //! - `forge-serve` — streams progress to the Live Canvas during the run
