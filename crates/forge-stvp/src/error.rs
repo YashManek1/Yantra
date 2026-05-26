@@ -96,6 +96,35 @@ pub enum StvpError {
     #[error("internal database mutex poisoned")]
     LockPoisoned,
 
+    /// Ed25519 key generation failed.
+    #[error("session key generation failed")]
+    KeyGeneration,
+
+    /// The session key file could not be written.
+    #[error("could not write session key to {path}: {source}")]
+    KeyWrite {
+        /// Path that could not be written.
+        path: String,
+        /// Underlying I/O error.
+        source: std::io::Error,
+    },
+
+    /// The session key file could not be read.
+    #[error("could not read session key from {path}: {source}")]
+    KeyRead {
+        /// Path that could not be read.
+        path: String,
+        /// Underlying I/O error.
+        source: std::io::Error,
+    },
+
+    /// The key material was rejected by the `ring` crypto library.
+    #[error("session key rejected: {reason}")]
+    KeyRejected {
+        /// Description of why the key was rejected.
+        reason: String,
+    },
+
     /// A foundational core operation failed.
     #[error("core error: {0}")]
     Core(#[from] CoreError),

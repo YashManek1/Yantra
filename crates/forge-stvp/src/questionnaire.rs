@@ -68,7 +68,9 @@ impl Question {
 /// Returns the questionnaire for a given `TaskClass`.
 ///
 /// `NewFeature` and `BugFix` are fully specified with 7 questions each.
-/// All other classes return a single generic success-criterion question.
+/// Light-mode classes (`Refactor`, `Migration`, `Integration`, `Exploration`)
+/// return a single generic success-criterion question. Trust-mode classes
+/// (`Chore`, `Docstring`, `Style`) return an empty questionnaire.
 pub fn questionnaire_for_class(task_class: TaskClass) -> Vec<Question> {
     match task_class {
         TaskClass::NewFeature => new_feature_questionnaire(),
@@ -77,9 +79,8 @@ pub fn questionnaire_for_class(task_class: TaskClass) -> Vec<Question> {
         TaskClass::Migration => skeleton_questionnaire("migration"),
         TaskClass::Integration => skeleton_questionnaire("integration"),
         TaskClass::Exploration => skeleton_questionnaire("exploration"),
-        TaskClass::Chore => skeleton_questionnaire("chore"),
-        TaskClass::Docstring => skeleton_questionnaire("docstring"),
-        TaskClass::Style => skeleton_questionnaire("style"),
+        // Trust-mode classes: no questionnaire — the spec guarantees no validators run.
+        TaskClass::Chore | TaskClass::Docstring | TaskClass::Style => vec![],
     }
 }
 
@@ -250,15 +251,12 @@ mod tests {
     }
 
     #[test]
-    fn skeleton_classes_return_one_question() {
+    fn light_mode_skeleton_classes_return_one_success_criterion_question() {
         for task_class in [
             TaskClass::Refactor,
             TaskClass::Migration,
             TaskClass::Integration,
             TaskClass::Exploration,
-            TaskClass::Chore,
-            TaskClass::Docstring,
-            TaskClass::Style,
         ] {
             let questionnaire = questionnaire_for_class(task_class);
             assert_eq!(
@@ -267,6 +265,17 @@ mod tests {
                 "{task_class:?} should have exactly one skeleton question"
             );
             assert_eq!(questionnaire[0].id, "success_criterion");
+        }
+    }
+
+    #[test]
+    fn trust_mode_classes_return_empty_questionnaire() {
+        for task_class in [TaskClass::Chore, TaskClass::Docstring, TaskClass::Style] {
+            let questionnaire = questionnaire_for_class(task_class);
+            assert!(
+                questionnaire.is_empty(),
+                "{task_class:?} is Trust-mode and must return no questions"
+            );
         }
     }
 
