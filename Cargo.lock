@@ -3416,9 +3416,14 @@ dependencies = [
 name = "yantra-crg"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tracing",
+ "uuid",
  "yantra-ast",
  "yantra-core",
 ]

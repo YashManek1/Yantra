@@ -18,3 +18,10 @@
 //! - `forge-ast` — provides symbol and edge input
 //! - `forge-stvp` — supplies forced seeds via `existing_truth_refs`
 //! - `forge-verifier` — queries the graph for hallucination checks
+pub mod builder;
+pub mod connectivity;
+pub mod schema;
+
+pub use builder::GraphBuilder;
+pub use connectivity::compute_connectivity;
+pub use schema::{create_crg_schema, CRG_SCHEMA_SQL};

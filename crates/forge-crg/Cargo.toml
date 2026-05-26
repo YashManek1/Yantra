@@ -13,6 +13,15 @@ yantra-ast.workspace  = true
 thiserror.workspace   = true
 tracing.workspace     = true
 serde.workspace       = true
+rusqlite.workspace    = true
+chrono.workspace      = true
+serde_json.workspace  = true
+uuid.workspace        = true
+anyhow.workspace      = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "crg_bench"
+harness = false
