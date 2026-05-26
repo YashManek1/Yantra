@@ -13,3 +13,23 @@
 //!
 //! ## Related
 //! - Every other `yantra-*` crate depends on this one
+
+pub mod agent;
+pub mod db;
+pub mod error;
+pub mod id;
+pub mod model;
+pub mod path;
+pub mod span;
+pub mod task;
+pub mod truth;
+
+pub use agent::{AgentCapability, AgentKind, AgentSpec};
+pub use db::{apply_migrations, connection_pool, DbPool, MIGRATION_VERSION_TABLE_SQL};
+pub use error::{CoreError, CoreResult};
+pub use id::{DecisionId, SessionId, SpanId, SymbolId, TaskId};
+pub use model::{ModelCapability, ModelId, ModelTier};
+pub use path::{canonicalize_within, is_sacred, ProjectRoot};
+pub use span::{ErrorRecord, Outcome, Span};
+pub use task::{TaskClass, TaskNode, TaskStatus};
+pub use truth::{Strictness, TruthToken, VerifyingKey};
