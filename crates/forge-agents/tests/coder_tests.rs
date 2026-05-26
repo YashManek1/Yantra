@@ -4,6 +4,10 @@
 //! that contains an `add_numbers` function. A deterministic mock `ModelProvider`
 //! at Tier 0 returns a hard-coded unified diff so tests remain offline and fast.
 //!
+//! Tests that only assert on the model response (not CRG content) use a
+//! `MockCrgServer` to avoid loading the fastembed ONNX model, which prevents
+//! race conditions on the shared HuggingFace model cache in CI.
+//!
 //! ## Input
 //! - Temporary project directory with a single `lib.rs` fixture file
 //! - `MockProvider` returning a predetermined diff response
@@ -20,6 +24,7 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use rusqlite::Connection;
+use serde_json::{json, Value};
 use yantra_agents::{Agent, AgentContext, AgentError, CoderAgent};
 use yantra_core::{
     AgentKind, ModelCapability, ModelTier, Outcome, SessionId, Strictness, TaskClass, TaskId,
@@ -30,12 +35,32 @@ use yantra_router::{
     CompletionRequest, CompletionResponse, FinishReason, ModelProvider, ProviderError,
     ProviderStatus, Router, RoutingPolicy,
 };
-use yantra_tools::{CrgMcpServer, McpRouter};
+use yantra_tools::{CrgMcpServer, McpError, McpRouter, McpServer, ToolCapability};
 
 static EMBEDDING_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
 
 fn embedding_lock() -> &'static std::sync::Mutex<()> {
     EMBEDDING_LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+/// Lightweight CRG stand-in that returns an empty subgraph without loading the
+/// ONNX embedding model. Used by tests that only assert on model response
+/// content, not on CRG retrieval quality.
+struct MockCrgServer;
+
+#[async_trait]
+impl McpServer for MockCrgServer {
+    fn name(&self) -> &str {
+        "crg"
+    }
+
+    async fn handle(&self, _method: &str, _params: Value) -> Result<Value, McpError> {
+        Ok(json!({ "text": "", "token_cost": 0, "included_node_count": 0 }))
+    }
+
+    fn capabilities(&self) -> Vec<ToolCapability> {
+        Vec::new()
+    }
 }
 
 fn build_add_numbers_fixture() -> (Connection, EmbeddingStore, GraphCache) {
@@ -131,12 +156,20 @@ fn build_agent_context(
     let crg_server = CrgMcpServer::new(sqlite_connection, embedding_store, graph_cache);
     let mut mcp_router = McpRouter::new(["crg.subgraph".to_owned()]);
     mcp_router.register_server(Arc::new(crg_server));
+    build_context_from_mcp(mcp_router, mock_response)
+}
 
+fn build_context_with_mock_crg(mock_response: String) -> AgentContext {
+    let mut mcp_router = McpRouter::new(["crg.subgraph".to_owned()]);
+    mcp_router.register_server(Arc::new(MockCrgServer));
+    build_context_from_mcp(mcp_router, mock_response)
+}
+
+fn build_context_from_mcp(mcp_router: McpRouter, mock_response: String) -> AgentContext {
     let mock_provider: Arc<dyn ModelProvider> = Arc::new(MockProvider {
         response_content: mock_response,
     });
     let router = Router::new(RoutingPolicy::default(), vec![mock_provider]);
-
     AgentContext {
         router: Arc::new(router),
         tools: mcp_router,
@@ -238,11 +271,7 @@ async fn coder_returns_error_when_truth_token_missing() {
 
 #[tokio::test]
 async fn coder_diff_summary_line_matches_first_response_line() {
-    let (sqlite_connection, embedding_store, graph_cache) = build_add_numbers_fixture();
-    let context = build_agent_context(
-        sqlite_connection,
-        embedding_store,
-        graph_cache,
+    let context = build_context_with_mock_crg(
         "Adding docstring to add_numbers.\n\n// File: lib.rs\n--- a/lib.rs\n+++ b/lib.rs\n@@ -1 +1,2 @@\n+/// Doc.\n pub fn add_numbers".to_owned(),
     );
 
