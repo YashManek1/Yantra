@@ -180,7 +180,9 @@ impl ArchivalStore {
                 let similarity_score = embedding_blob
                     .as_deref()
                     .and_then(unpack_embedding)
-                    .map_or(0.0_f32, |stored_embedding| cosine_similarity(&query_embedding, &stored_embedding));
+                    .map_or(0.0_f32, |stored_embedding| {
+                        cosine_similarity(&query_embedding, &stored_embedding)
+                    });
 
                 let shard = MemoryShard {
                     id,

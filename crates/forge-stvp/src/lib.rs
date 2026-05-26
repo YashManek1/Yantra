@@ -27,6 +27,7 @@ pub mod error;
 pub mod interrogator;
 pub mod questionnaire;
 pub mod source_truth;
+pub mod spec_compiler;
 pub mod token;
 pub mod validation;
 pub mod validators;
@@ -37,6 +38,7 @@ pub use error::StvpError;
 pub use interrogator::{strictness_for_class, Interrogator, QuestionnaireUi};
 pub use questionnaire::{AnswerKind, Question};
 pub use source_truth::SourceTruth;
+pub use spec_compiler::{GeneratedTest, Language, SpecCompiler};
 pub use token::{issue_token, verify_token, SigningKey};
 pub use validation::{
     run_all, ProjectContext, ValidationReport, ValidationViolation, ViolationSeverity,
