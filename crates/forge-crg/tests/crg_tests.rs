@@ -19,7 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use uuid::Uuid;
-use yantra_crg::GraphBuilder;
+use yantra_core::SymbolId;
+use yantra_crg::{GraphBuilder, EmbeddingStore, GraphCache, extract_subgraph};
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Ord, PartialOrd)]
 struct SymbolRecord {
@@ -256,6 +257,138 @@ fn test_incremental_vs_full_rebuild_property() {
         state_incremental_deletion,
         state_full_deletion,
         "Incremental deletion did not produce identical state to full rebuild!"
+    );
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+static EMBEDDING_INIT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn test_subgraph_budget_and_forced_seeds() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory = std::env::temp_dir().join(format!("yantra-crg-subgraph-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let _lock_guard = EMBEDDING_INIT_MUTEX.lock().unwrap();
+    let embedding_store = EmbeddingStore::new().unwrap();
+    embedding_store.embed_all(graph_builder.connection()).unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+
+    let mut select_statement = graph_builder.connection().prepare("SELECT id FROM symbols").unwrap();
+    let symbol_ids: Vec<SymbolId> = select_statement.query_map([], |row| {
+        let id_string: String = row.get(0)?;
+        Ok(yantra_core::SymbolId::new(id_string).unwrap())
+    }).unwrap().map(|row_result| row_result.unwrap()).collect();
+
+    let forced_symbol_ids = vec![symbol_ids[0].clone(), symbol_ids[1].clone()];
+
+    let rendered_subgraph_tiny = extract_subgraph(
+        &graph_cache,
+        &embedding_store,
+        "format greet message",
+        10,
+        forced_symbol_ids.clone(),
+    ).unwrap();
+
+    for seed in &forced_symbol_ids {
+        assert!(
+            rendered_subgraph_tiny.included_nodes.contains(seed),
+            "Expected forced seed {:?} to be included in tiny budget subgraph",
+            seed
+        );
+    }
+
+    let rendered_subgraph_reasonable = extract_subgraph(
+        &graph_cache,
+        &embedding_store,
+        "format greet message",
+        200,
+        forced_symbol_ids,
+    ).unwrap();
+
+    assert!(
+        rendered_subgraph_reasonable.token_cost <= 200,
+        "Reasonable budget token cost exceeded: {}",
+        rendered_subgraph_reasonable.token_cost
+    );
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_subgraph_golden_corpus_recall() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory = std::env::temp_dir().join(format!("yantra-crg-golden-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let _lock_guard = EMBEDDING_INIT_MUTEX.lock().unwrap();
+    let embedding_store = EmbeddingStore::new().unwrap();
+    embedding_store.embed_all(graph_builder.connection()).unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+
+    let golden_corpus = vec![
+        ("greet the user or say hello", vec!["Greeter", "WorldGreeter"]),
+        ("format a message helper function", vec!["format_message"]),
+        ("run main entry point program", vec!["main"]),
+        ("hello world greeter implementation", vec!["WorldGreeter", "Greeter"]),
+        ("trait definition for greetings", vec!["Greeter"]),
+        ("helper function to format text string", vec!["format_message"]),
+        ("printing greetings to stdout in main", vec!["main", "WorldGreeter"]),
+        ("impl block for WorldGreeter", vec!["WorldGreeter", "Greeter"]),
+        ("format message string greeting", vec!["format_message"]),
+        ("execute main function and show greeting", vec!["main"]),
+    ];
+
+    let mut total_expected_symbols = 0;
+    let mut total_matched_symbols = 0;
+
+    let mut select_name_statement = graph_builder.connection().prepare(
+        "SELECT name FROM symbols WHERE id = ?1"
+    ).unwrap();
+
+    for (task_description, expected_symbols) in golden_corpus {
+        let rendered_subgraph = extract_subgraph(
+            &graph_cache,
+            &embedding_store,
+            task_description,
+            500,
+            Vec::new(),
+        ).unwrap();
+
+        let mut included_names = std::collections::HashSet::new();
+        for node_id in &rendered_subgraph.included_nodes {
+            if let Ok(name) = select_name_statement.query_row(
+                [&node_id.to_string()],
+                |row| row.get::<_, String>(0)
+            ) {
+                included_names.insert(name);
+            }
+        }
+
+        total_expected_symbols += expected_symbols.len();
+        for expected in expected_symbols {
+            if included_names.contains(expected) {
+                total_matched_symbols += 1;
+            }
+        }
+    }
+
+    let recall = (total_matched_symbols as f32) / (total_expected_symbols as f32);
+    assert!(
+        recall >= 0.90,
+        "Golden corpus recall target (>90%) not met: {:.2}%",
+        recall * 100.0
     );
 
     fs::remove_dir_all(&temp_directory).unwrap();

@@ -5,13 +5,24 @@
 //! in Yantra pass through this crate to prevent overruns.
 //!
 //! ## Input
-//! - Raw text strings or byte slices
-//! - `token_budget: usize` — hard ceiling on output token count
+//! - `text: &str` — raw text to count tokens for
 //!
 //! ## Output
-//! - Token counts and (optionally) truncated or split buffers that fit
-//!   within the supplied budget
+//! - `usize` — estimated number of tokens
 //!
 //! ## Related
 //! - `forge-crg` — uses token counts to bound subgraph rendering
-//! - `forge-router` — checks budget before every LLM call
+
+pub fn count_tokens(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else {
+        let character_count = text.len();
+        let estimated_tokens = character_count / 4;
+        if estimated_tokens == 0 {
+            1
+        } else {
+            estimated_tokens
+        }
+    }
+}

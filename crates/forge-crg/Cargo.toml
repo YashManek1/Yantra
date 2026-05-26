@@ -10,6 +10,7 @@ publish             = false
 [dependencies]
 yantra-core.workspace = true
 yantra-ast.workspace  = true
+yantra-tokenizer.workspace = true
 thiserror.workspace   = true
 tracing.workspace     = true
 serde.workspace       = true
@@ -18,6 +19,8 @@ chrono.workspace      = true
 serde_json.workspace  = true
 uuid.workspace        = true
 anyhow.workspace      = true
+fastembed.workspace   = true
+regex.workspace       = true
 
 [lints]
 workspace = true

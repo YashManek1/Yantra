@@ -17,3 +17,13 @@ yantra_v2_elevation.md
 .codex
 .claude
 .agents
+
+.fastembed_cache/
+target/
+.yantra/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+crates/**/target/
+crates/**/.fastembed_cache/

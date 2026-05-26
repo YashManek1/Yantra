@@ -73,12 +73,14 @@ clap               = { version = "4",    features = ["derive"] }
 proptest           = "1"
 ring               = "0.17"
 parking_lot        = "0.12"
+regex              = "1"
 async-trait        = "0.1"
 gix                = { version = "0.73", default-features = false }
 tree-sitter        = "0.25"
 tree-sitter-rust   = "0.24"
 tree-sitter-python = "0.25"
 tree-sitter-typescript = "0.23"
+fastembed              = "4"
 
 # ---------------------------------------------------------------------------
 # Lint configuration — individual crates inherit with `[lints] workspace = true`
