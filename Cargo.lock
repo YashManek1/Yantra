@@ -1558,7 +1558,14 @@ dependencies = [
 name = "yantra-obs"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "parking_lot",
+ "proptest",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "yantra-core",
