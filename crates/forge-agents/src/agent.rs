@@ -21,7 +21,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use yantra_core::{AgentCapability, AgentKind, DecisionId, Outcome, SessionId, TaskId, TaskNode};
+use yantra_core::{
+    AgentCapability, AgentKind, DecisionId, Outcome, SessionId, TaskId, TaskNode, WorkspaceMode,
+};
 use yantra_router::Router;
 use yantra_tools::McpRouter;
 
@@ -70,6 +72,8 @@ pub struct AgentContext {
     pub upstream_results: Vec<TaskResult>,
     /// Memory service facade for recall and mistake prevention rules.
     pub memory: Arc<yantra_memory::MemoryService>,
+    /// Mode of the current workspace (Greenfield vs. Incremental).
+    pub workspace_mode: WorkspaceMode,
 }
 
 /// Trait implemented by every specialist agent.

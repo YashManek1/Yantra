@@ -87,6 +87,43 @@ pub fn initialize_schema(connection: &Connection) -> AstResult<()> {
     Ok(())
 }
 
+/// Inserts or replaces a file record in the files table.
+///
+/// # Errors
+///
+/// Returns `AstError::Database` when insertion fails.
+pub fn insert_file(
+    database: &Connection,
+    file_path: &std::path::Path,
+    language: LanguageKind,
+    loc: usize,
+    content: &str,
+) -> AstResult<()> {
+    let file_id = file_id_for_path(file_path);
+    let content_fingerprint = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        file_path.hash(&mut hasher);
+        content.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+    database.execute(
+        "INSERT OR REPLACE INTO files (
+            id, path, language, loc, last_modified, content_hash
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            file_id,
+            file_path.to_string_lossy(),
+            serde_json::to_string(&language).unwrap_or_else(|_| "\"Rust\"".to_string()),
+            i64::try_from(loc).unwrap_or(i64::MAX),
+            Utc::now().to_rfc3339(),
+            content_fingerprint,
+        ],
+    )?;
+    Ok(())
+}
+
 /// Inserts or replaces one symbol and its owning file row.
 ///
 /// # Errors

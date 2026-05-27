@@ -36,7 +36,7 @@ use yantra_agents::{
     parse_diffs_from_response, Agent, CoderAgent, CommitSigningKey, CommitterAgent, RedTeamAgent,
     ResearcherAgent, VerifierAgent,
 };
-use yantra_core::{AgentKind, ProjectRoot, SessionId, TaskNode, TaskStatus};
+use yantra_core::{AgentKind, ProjectRoot, SessionId, TaskNode, TaskStatus, WorkspaceMode};
 use yantra_crg::{EmbeddingStore, GraphCache};
 use yantra_orchestrator::{CircuitBreaker, EventBus, Orchestrator, Scheduler, TaskDag};
 use yantra_router::routing::RoutedCompletionRequest;
@@ -254,6 +254,7 @@ pub async fn run_command(
             }
         }
 
+        let workspace_mode = WorkspaceMode::detect(project_root.as_path());
         let (scheduler, _review_receiver) = Scheduler::new(
             dag.clone(),
             agents,
@@ -264,6 +265,7 @@ pub async fn run_command(
             session_id,
             std::time::Duration::from_millis(50),
             memory_service.clone(),
+            workspace_mode,
         );
 
         let researcher_task_id = yantra_core::TaskId::new();
@@ -366,7 +368,7 @@ pub async fn run_command(
     }
 
     // ── Step 10: Coder run with closed-loop verification & commit ─────────────
-    let is_greenfield = is_greenfield_workspace(&project_root);
+    let is_greenfield = WorkspaceMode::detect(project_root.as_path()) == WorkspaceMode::Greenfield;
     if is_greenfield {
         println!(
             "(Greenfield Scaffolding Mode active — workspace is empty or has minimal symbols)"
@@ -700,21 +702,6 @@ fn try_extract_crg_subgraph(project_root: &ProjectRoot, query: &str) -> String {
     yantra_crg::extract_subgraph(&graph_cache, &embedding_store, query, 4096, &[])
         .map(|subgraph| subgraph.text)
         .unwrap_or_default()
-}
-
-fn is_greenfield_workspace(project_root: &ProjectRoot) -> bool {
-    let crg_db_path = project_root.as_path().join(".yantra").join("crg.sqlite");
-    if !crg_db_path.exists() {
-        return true;
-    }
-    if let Ok(connection) = rusqlite::Connection::open(&crg_db_path) {
-        if let Ok(mut stmt) = connection.prepare("SELECT COUNT(*) FROM symbols") {
-            if let Ok(count) = stmt.query_row([], |row| row.get::<_, i64>(0)) {
-                return count < 3;
-            }
-        }
-    }
-    true
 }
 
 /// Calls the model router with a Coder-formatted prompt for `description`.

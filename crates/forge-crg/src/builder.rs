@@ -76,6 +76,15 @@ impl GraphBuilder {
 
             for file_path in &language_files_list {
                 if let Ok(parsed_file) = yantra_ast::parse_file(file_path) {
+                    let lines_count = parsed_file.source.lines().count();
+                    yantra_ast::insert_file(
+                        &self.connection,
+                        file_path,
+                        parsed_file.language,
+                        lines_count,
+                        &parsed_file.source,
+                    )?;
+
                     if let Ok((symbols, calls, imports)) = yantra_ast::extract_all(&parsed_file) {
                         for symbol in &symbols {
                             yantra_ast::insert_symbol(&self.connection, symbol)?;
@@ -191,6 +200,15 @@ impl GraphBuilder {
                 Ok(parsed) => parsed,
                 Err(_) => return Ok(()),
             };
+
+            let lines_count = parsed_file.source.lines().count();
+            yantra_ast::insert_file(
+                &self.connection,
+                file_path,
+                parsed_file.language,
+                lines_count,
+                &parsed_file.source,
+            )?;
 
             let (new_symbols, calls, imports) =
                 yantra_ast::extract_all(&parsed_file).unwrap_or_default();

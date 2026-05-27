@@ -20,7 +20,7 @@
 
 use async_trait::async_trait;
 use serde_json::json;
-use yantra_core::{AgentCapability, AgentKind, DecisionId, Outcome, TaskNode};
+use yantra_core::{AgentCapability, AgentKind, DecisionId, Outcome, TaskNode, WorkspaceMode};
 use yantra_router::routing::RoutedCompletionRequest;
 use yantra_router::{CompletionRequest, Message, MessageRole, TaskDescription, ToolSpec};
 
@@ -47,14 +47,28 @@ impl CoderAgent {
         truth_summary: &str,
         subgraph_text: &str,
         task_description: &str,
+        is_greenfield: bool,
     ) -> Vec<Message> {
-        let user_content = format!(
-            "## Source Truth\n{truth_summary}\n\n\
-             ## Code Context (CRG Subgraph)\n{subgraph_text}\n\n\
-             ## Task\n{task_description}\n\n\
-             Provide your changes as unified diffs, \
-             each preceded by a `// File: <relative/path>` comment."
-        );
+        let user_content = if is_greenfield {
+            format!(
+                "## Source Truth\n{truth_summary}\n\n\
+                 ## Task\n{task_description}\n\n\
+                 ## Greenfield Scaffolding Mode Active\n\
+                 The workspace is currently EMPTY or has no symbols. Do NOT look for existing code or try to write a diff on existing functions.\n\
+                 Instead, design the architecture and create the project files (e.g. Cargo.toml, src/main.rs) as COMPLETE new files.\n\
+                 Follow the two-phase protocol from your system prompt. \
+                 Phase 1: list zero grounded symbols (GROUNDED SYMBOLS: none) and specify 'INSERTION POINT: none'.\n\
+                 Phase 2: produce full-file creation blocks prefixed with '// Create File: <relative/path>'."
+            )
+        } else {
+            format!(
+                "## Source Truth\n{truth_summary}\n\n\
+                 ## Code Context (CRG Subgraph)\n{subgraph_text}\n\n\
+                 ## Task\n{task_description}\n\n\
+                 Provide your changes as unified diffs, \
+                 each preceded by a `// File: <relative/path>` comment."
+            )
+        };
         vec![
             Message {
                 role: MessageRole::System,
@@ -119,20 +133,21 @@ impl Agent for CoderAgent {
                     task_id: task.id.to_string(),
                 })?;
 
-        let crg_response = context
+        let subgraph_text = context
             .tools
             .handle(
                 "crg.subgraph",
                 json!({ "task": task.description, "budget": 4096_u64 }),
             )
             .await
-            .map_err(|error| AgentError::McpToolCall(error.message))?;
-
-        let subgraph_text = crg_response
-            .get("text")
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-            .to_owned();
+            .ok()
+            .and_then(|crg_response| {
+                crg_response
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .map(std::borrow::ToOwned::to_owned)
+            })
+            .unwrap_or_default();
 
         let mut truth_summary = format!(
             "Task ID: {}\nClass: {:?}\nStrictness: {:?}",
@@ -174,8 +189,13 @@ impl Agent for CoderAgent {
             }
         }
 
-        let messages =
-            Self::assemble_prompt_messages(&truth_summary, &subgraph_text, &task_description);
+        let is_greenfield = context.workspace_mode == WorkspaceMode::Greenfield;
+        let messages = Self::assemble_prompt_messages(
+            &truth_summary,
+            &subgraph_text,
+            &task_description,
+            is_greenfield,
+        );
 
         let tool_specifications = vec![
             ToolSpec {
@@ -382,8 +402,12 @@ mod tests {
             "## Symbol: add_numbers\n```rust\npub fn add_numbers(a: i32, b: i32) -> i32 { a + b }\n```";
         let task_description = "add docstring to add_numbers";
 
-        let messages =
-            CoderAgent::assemble_prompt_messages(truth_summary, subgraph_text, task_description);
+        let messages = CoderAgent::assemble_prompt_messages(
+            truth_summary,
+            subgraph_text,
+            task_description,
+            false,
+        );
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, MessageRole::System);
@@ -395,9 +419,27 @@ mod tests {
 
     #[test]
     fn prompt_assembly_system_message_contains_persona() {
-        let messages = CoderAgent::assemble_prompt_messages("", "", "");
+        let messages = CoderAgent::assemble_prompt_messages("", "", "", false);
         assert!(!messages[0].content.is_empty());
         assert!(messages[0].content.contains("Coder"));
+    }
+
+    #[test]
+    fn prompt_assembly_greenfield_mode() {
+        let truth_summary = "Task ID: test\nClass: NewFeature\nStrictness: Trust";
+        let task_description = "create main file";
+
+        let messages =
+            CoderAgent::assemble_prompt_messages(truth_summary, "", task_description, true);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, MessageRole::System);
+        assert!(messages[1]
+            .content
+            .contains("Greenfield Scaffolding Mode Active"));
+        assert!(!messages[1].content.contains("Code Context"));
+        assert!(messages[1].content.contains(task_description));
+        assert!(messages[1].content.contains(truth_summary));
     }
 
     #[test]

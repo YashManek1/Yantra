@@ -28,7 +28,7 @@ use yantra_agents::{
 };
 use yantra_core::{
     ModelCapability, ModelTier, Outcome, SessionId, Strictness, TaskClass, TaskId, TaskNode,
-    TaskStatus, TruthToken,
+    TaskStatus, TruthToken, WorkspaceMode,
 };
 use yantra_router::{
     CompletionRequest, CompletionResponse, FinishReason, ModelProvider, ProviderError,
@@ -185,6 +185,7 @@ fn make_agent_context(response_content: impl Into<String>) -> AgentContext {
         session_id: SessionId::new(),
         upstream_results: Vec::new(),
         memory,
+        workspace_mode: WorkspaceMode::Incremental,
     }
 }
 
@@ -245,6 +246,7 @@ async fn researcher_returns_success_with_memo_json_in_summary() {
         session_id: SessionId::new(),
         upstream_results: Vec::new(),
         memory,
+        workspace_mode: WorkspaceMode::Incremental,
     };
 
     let task = make_task(TaskClass::NewFeature, "add JWT rotation to auth service");
@@ -460,6 +462,7 @@ async fn committer_produces_signed_commit_with_git_mcp_server() {
         session_id: SessionId::new(),
         upstream_results: Vec::new(),
         memory,
+        workspace_mode: WorkspaceMode::Incremental,
     };
 
     let signing_key = CommitSigningKey::generate().expect("key generation succeeds");
@@ -493,6 +496,7 @@ async fn committer_succeeds_even_when_git_mcp_is_unavailable() {
         session_id: SessionId::new(),
         upstream_results: Vec::new(),
         memory,
+        workspace_mode: WorkspaceMode::Incremental,
     };
 
     let signing_key = CommitSigningKey::generate().expect("key generation succeeds");
@@ -581,6 +585,7 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         session_id,
         upstream_results: Vec::new(),
         memory: Arc::clone(&memory),
+        workspace_mode: WorkspaceMode::Incremental,
     };
     let researcher_task =
         make_chained_task(task_id, task_class, "add JWT rotation", truth_token.clone());
@@ -609,6 +614,7 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         session_id,
         upstream_results: vec![researcher_result.clone()],
         memory: Arc::clone(&memory),
+        workspace_mode: WorkspaceMode::Incremental,
     };
     let coder_task =
         make_chained_task(task_id, task_class, "add JWT rotation", truth_token.clone());
@@ -640,6 +646,7 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         session_id,
         upstream_results: vec![coder_result.clone()],
         memory: Arc::clone(&memory),
+        workspace_mode: WorkspaceMode::Incremental,
     };
     let tester_task = make_chained_task(
         task_id,
@@ -664,6 +671,7 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         session_id,
         upstream_results: vec![tester_result.clone()],
         memory: Arc::clone(&memory),
+        workspace_mode: WorkspaceMode::Incremental,
     };
     let verifier_task = make_chained_task(
         task_id,
@@ -693,6 +701,7 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         session_id,
         upstream_results: vec![verifier_result.clone()],
         memory: Arc::clone(&memory),
+        workspace_mode: WorkspaceMode::Incremental,
     };
     let signing_key = CommitSigningKey::generate().expect("key generation succeeds");
     let committer_task = make_chained_task(

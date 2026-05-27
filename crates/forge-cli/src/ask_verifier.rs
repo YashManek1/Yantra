@@ -180,4 +180,261 @@ impl SymbolAllowlistVerifier {
         sorted_unverified.sort();
         sorted_unverified
     }
+
+    /// Scans the answer for potential cross-crate role conflations between PreFlight and Runtime symbols.
+    pub fn check_cross_crate_conflations(
+        subgraph: &RenderedSubgraph,
+        graph_cache: &GraphCache,
+        answer: &str,
+    ) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let normalized_answer = answer.to_lowercase();
+
+        let mut symbol_phases = std::collections::HashMap::new();
+        for symbol_id in &subgraph.included_nodes {
+            if let Some(details) = graph_cache.symbol_details.get(symbol_id) {
+                let phase = get_lifecycle_phase(&details.file_path);
+                symbol_phases.insert(details.name.to_lowercase(), (details.name.clone(), phase));
+            }
+        }
+
+        let segments: Vec<&str> = normalized_answer.split(['.', '?', '!', '\n']).collect();
+
+        for segment in segments {
+            let trimmed = segment.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            for (symbol_name_lower, (symbol_original_name, symbol_phase)) in &symbol_phases {
+                if trimmed.contains(symbol_name_lower) {
+                    if *symbol_phase == "Runtime" {
+                        for word in PRE_FLIGHT_KEYWORDS {
+                            if trimmed.contains(word) {
+                                let warning = format!(
+                                    "Symbol `{symbol_original_name}` (Runtime) is cited near PreFlight concepts like \"{word}\""
+                                );
+                                if !warnings.contains(&warning) {
+                                    warnings.push(warning);
+                                }
+                            }
+                        }
+                    } else if *symbol_phase == "PreFlight" {
+                        for word in RUNTIME_KEYWORDS {
+                            if trimmed.contains(word) {
+                                let warning = format!(
+                                    "Symbol `{symbol_original_name}` (PreFlight) is cited near Runtime concepts like \"{word}\""
+                                );
+                                if !warnings.contains(&warning) {
+                                    warnings.push(warning);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        warnings
+    }
+}
+
+const PRE_FLIGHT_KEYWORDS: &[&str] = &[
+    "validate",
+    "validation",
+    "consistency",
+    "truth token",
+    "interrogator",
+    "questionnaire",
+    "drift",
+];
+
+const RUNTIME_KEYWORDS: &[&str] = &[
+    "agent", "run", "schedule", "dispatch", "execute", "commit", "mcp",
+];
+
+fn get_lifecycle_phase(file_path: &str) -> &'static str {
+    let lower_path = file_path.to_lowercase();
+    if lower_path.contains("forge-agents")
+        || lower_path.contains("agents")
+        || lower_path.contains("forge-orchestrator")
+        || lower_path.contains("orchestrator")
+        || lower_path.contains("forge-night")
+        || lower_path.contains("night")
+        || lower_path.contains("forge-sidecar")
+        || lower_path.contains("sidecar")
+        || lower_path.contains("forge-serve")
+        || lower_path.contains("serve")
+        || lower_path.contains("forge-cli")
+        || lower_path.contains("cli")
+        || lower_path.contains("forge-eval")
+        || lower_path.contains("eval")
+        || lower_path.contains("forge-router")
+        || lower_path.contains("router")
+        || lower_path.contains("forge-lsp")
+        || lower_path.contains("lsp")
+        || lower_path.contains("forge-tools")
+        || lower_path.contains("tools")
+        || lower_path.contains("forge-swarm")
+        || lower_path.contains("swarm")
+    {
+        "Runtime"
+    } else if lower_path.contains("forge-stvp")
+        || lower_path.contains("stvp")
+        || lower_path.contains("forge-verifier")
+        || lower_path.contains("verifier")
+    {
+        "PreFlight"
+    } else if lower_path.contains("forge-obs")
+        || lower_path.contains("obs")
+        || lower_path.contains("tracing")
+    {
+        "Observability"
+    } else {
+        "Persistence"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use yantra_core::SymbolId;
+    use yantra_crg::{RenderedSubgraph, SubgraphManifest, SymbolDetails};
+
+    #[test]
+    fn test_verify_symbol_allowlist() {
+        let first_symbol_id = SymbolId::new("VerifierAgent").unwrap();
+        let second_symbol_id = SymbolId::new("CodebaseRealityValidator").unwrap();
+
+        let mut symbol_details_map = HashMap::new();
+        symbol_details_map.insert(
+            first_symbol_id.clone(),
+            SymbolDetails {
+                symbol_id: first_symbol_id.clone(),
+                name: "VerifierAgent".to_string(),
+                kind: "struct".to_string(),
+                start_line: 10,
+                signature: None,
+                docstring: None,
+                connectivity_score: 5,
+                file_path: "crates/forge-agents/src/verifier_agent.rs".to_string(),
+                file_id: "1".to_string(),
+                token_cost_with_docstring: 5,
+                token_cost_no_docstring: 5,
+            },
+        );
+        symbol_details_map.insert(
+            second_symbol_id.clone(),
+            SymbolDetails {
+                symbol_id: second_symbol_id.clone(),
+                name: "CodebaseRealityValidator".to_string(),
+                kind: "struct".to_string(),
+                start_line: 20,
+                signature: None,
+                docstring: None,
+                connectivity_score: 10,
+                file_path: "crates/forge-stvp/src/validation.rs".to_string(),
+                file_id: "2".to_string(),
+                token_cost_with_docstring: 10,
+                token_cost_no_docstring: 10,
+            },
+        );
+
+        let graph_cache = GraphCache {
+            symbol_details: symbol_details_map,
+            adjacency_index: HashMap::new(),
+            symbols_by_name: HashMap::new(),
+            symbols_by_file_id: HashMap::new(),
+            symbol_to_file_id: HashMap::new(),
+        };
+
+        let rendered_subgraph = RenderedSubgraph {
+            text: String::new(),
+            included_nodes: vec![first_symbol_id.clone()],
+            token_cost: 0,
+            manifest: SubgraphManifest { nodes: vec![] },
+        };
+
+        let unverified_symbol_references = SymbolAllowlistVerifier::verify(
+            &rendered_subgraph,
+            &graph_cache,
+            "We should look at `VerifierAgent` and `SomeHallucinatedSymbol` in `crates/forge-cli/src/main.rs`."
+        );
+
+        assert!(unverified_symbol_references.contains(&"SomeHallucinatedSymbol".to_string()));
+        assert!(!unverified_symbol_references.contains(&"VerifierAgent".to_string()));
+    }
+
+    #[test]
+    fn test_cross_crate_conflations() {
+        let first_symbol_id = SymbolId::new("VerifierAgent").unwrap();
+        let second_symbol_id = SymbolId::new("CodebaseRealityValidator").unwrap();
+
+        let mut symbol_details_map = HashMap::new();
+        symbol_details_map.insert(
+            first_symbol_id.clone(),
+            SymbolDetails {
+                symbol_id: first_symbol_id.clone(),
+                name: "VerifierAgent".to_string(),
+                kind: "struct".to_string(),
+                start_line: 10,
+                signature: None,
+                docstring: None,
+                connectivity_score: 5,
+                file_path: "crates/forge-agents/src/verifier_agent.rs".to_string(),
+                file_id: "1".to_string(),
+                token_cost_with_docstring: 5,
+                token_cost_no_docstring: 5,
+            },
+        );
+        symbol_details_map.insert(
+            second_symbol_id.clone(),
+            SymbolDetails {
+                symbol_id: second_symbol_id.clone(),
+                name: "CodebaseRealityValidator".to_string(),
+                kind: "struct".to_string(),
+                start_line: 20,
+                signature: None,
+                docstring: None,
+                connectivity_score: 10,
+                file_path: "crates/forge-stvp/src/validation.rs".to_string(),
+                file_id: "2".to_string(),
+                token_cost_with_docstring: 10,
+                token_cost_no_docstring: 10,
+            },
+        );
+
+        let graph_cache = GraphCache {
+            symbol_details: symbol_details_map,
+            adjacency_index: HashMap::new(),
+            symbols_by_name: HashMap::new(),
+            symbols_by_file_id: HashMap::new(),
+            symbol_to_file_id: HashMap::new(),
+        };
+
+        let rendered_subgraph = RenderedSubgraph {
+            text: String::new(),
+            included_nodes: vec![first_symbol_id.clone(), second_symbol_id.clone()],
+            token_cost: 0,
+            manifest: SubgraphManifest { nodes: vec![] },
+        };
+
+        let cross_crate_conflation_warnings = SymbolAllowlistVerifier::check_cross_crate_conflations(
+            &rendered_subgraph,
+            &graph_cache,
+            "The `VerifierAgent` validates the workspace. The `CodebaseRealityValidator` will run the scheduler."
+        );
+
+        assert!(cross_crate_conflation_warnings
+            .iter()
+            .any(|warning_message| warning_message.contains("VerifierAgent")
+                && warning_message.contains("validate")));
+        assert!(cross_crate_conflation_warnings
+            .iter()
+            .any(
+                |warning_message| warning_message.contains("CodebaseRealityValidator")
+                    && warning_message.contains("run")
+            ));
+    }
 }

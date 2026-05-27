@@ -21,8 +21,8 @@
 
 use async_trait::async_trait;
 use serde_json::json;
-use yantra_core::{AgentCapability, AgentKind, DecisionId, ModelTier, Outcome, TaskNode};
-use yantra_router::routing::RoutedCompletionRequest;
+use yantra_core::{AgentCapability, AgentKind, DecisionId, Outcome, TaskNode};
+use yantra_router::routing::{RoutedCompletionRequest, TaskDescription};
 use yantra_router::{CompletionRequest, Message, MessageRole};
 use yantra_verifier::parse_test_outcome;
 
@@ -198,15 +198,24 @@ impl Agent for TesterAgent {
             stop_sequences: Vec::new(),
         };
 
+        let task_description_metadata = TaskDescription {
+            description: task.description.clone(),
+            class: task.class,
+            tokens_estimated: prompt_token_estimate,
+            tool_calls_predicted: 0,
+            touches_sacred_files: false,
+            multi_file: false,
+        };
+        let required_tier = context.router.policy().classify(&task_description_metadata);
         let routed_request = RoutedCompletionRequest {
-            required_tier: ModelTier::Tier1,
+            required_tier,
             completion_request: completion_request.clone(),
         };
 
         tracing::debug!(
             task_id = %task.id,
             token_estimate = prompt_token_estimate,
-            "tester routing test generation request to Tier-1"
+            "tester routing test generation request via policy tier"
         );
 
         let model_provider = context

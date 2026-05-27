@@ -444,6 +444,19 @@ async fn main() -> anyhow::Result<()> {
                         println!("\x1b[33m    • `{unverified_symbol}`\x1b[0m");
                     }
                 }
+
+                let cross_role_warnings =
+                    ask_verifier::SymbolAllowlistVerifier::check_cross_crate_conflations(
+                        subgraph_payload,
+                        global_graph_cache,
+                        &accumulated_content,
+                    );
+                if !cross_role_warnings.is_empty() {
+                    println!("\n\x1b[33m⚠ Cross-Role Warning — potential lifecycle boundary/role conflations detected:\x1b[0m");
+                    for warning in cross_role_warnings {
+                        println!("\x1b[33m    • {warning}\x1b[0m");
+                    }
+                }
             }
 
             let cost_per_thousand_input = provider.capability().cost_per_1k_in;
