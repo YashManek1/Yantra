@@ -44,6 +44,7 @@ impl LanguageKind {
         }
     }
 
+    /// Returns the Tree-sitter `Language` object for this language variant.
     pub(crate) fn tree_sitter_language(self) -> Language {
         match self {
             Self::Rust => tree_sitter_rust::LANGUAGE.into(),
@@ -102,6 +103,11 @@ pub struct ParsedFile {
 }
 
 /// Parses a source file using the language registry.
+///
+/// # Blocking
+///
+/// This function performs synchronous I/O. Call it from async code via
+/// `tokio::task::spawn_blocking` to avoid blocking the runtime thread.
 ///
 /// # Errors
 ///

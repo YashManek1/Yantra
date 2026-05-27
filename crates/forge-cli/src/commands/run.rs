@@ -45,7 +45,14 @@ struct CliQuestionnaireUi;
 
 impl QuestionnaireUi for CliQuestionnaireUi {
     fn prompt(&self, question: &Question) -> Result<String, StvpError> {
-        inquire::Text::new(&question.text)
+        let mut text_prompt = inquire::Text::new(&question.text);
+        if let Some(ref placeholder) = question.suggested_answer {
+            text_prompt = text_prompt.with_placeholder(placeholder);
+        }
+        if let Some(ref help) = question.help_text {
+            text_prompt = text_prompt.with_help_message(help);
+        }
+        text_prompt
             .prompt()
             .map_err(|_| StvpError::QuestionnaireAborted)
     }
@@ -68,7 +75,8 @@ pub async fn run_command(
     let signing_key = SigningKey::load_or_generate(&yantra_dir)
         .context("failed to load or generate signing key")?;
 
-    let interrogator = Interrogator::new(project_root.clone());
+    let augmenter = Arc::new(crate::augmenter::CliQuestionAugmenter::new(router.clone()));
+    let interrogator = Interrogator::new(project_root.clone()).with_augmenter(augmenter);
     let validation_context = ProjectContext {
         project_root: project_root.clone(),
     };
@@ -77,6 +85,7 @@ pub async fn run_command(
     let truth: SourceTruth = loop {
         let source_truth = interrogator
             .ask(&description, &CliQuestionnaireUi)
+            .await
             .context("STVP questionnaire failed or was aborted")?;
 
         let validation_report = run_all(&source_truth, &validation_context);
@@ -182,8 +191,15 @@ pub async fn run_command(
     // ── Step 10: Coder run ───────────────────────────────────────────────────
     println!("\nRunning Coder…");
 
+    let is_greenfield = is_greenfield_workspace(&project_root);
+    if is_greenfield {
+        println!(
+            "(Greenfield Scaffolding Mode active — workspace is empty or has minimal symbols)"
+        );
+    }
+
     let coder_response =
-        call_coder_via_router(&router, &truth, &subgraph_text, &description).await?;
+        call_coder_via_router(&router, &truth, &subgraph_text, &description, is_greenfield).await?;
 
     println!("\n{}", "─".repeat(72));
     println!("Coder output:");
@@ -292,30 +308,73 @@ fn try_extract_crg_subgraph(project_root: &ProjectRoot, query: &str) -> String {
         .unwrap_or_default()
 }
 
+fn is_greenfield_workspace(project_root: &ProjectRoot) -> bool {
+    let crg_db_path = project_root.as_path().join(".yantra").join("crg.sqlite");
+    if !crg_db_path.exists() {
+        return true;
+    }
+    if let Ok(connection) = rusqlite::Connection::open(&crg_db_path) {
+        if let Ok(mut stmt) = connection.prepare("SELECT COUNT(*) FROM symbols") {
+            if let Ok(count) = stmt.query_row([], |row| row.get::<_, i64>(0)) {
+                return count < 3;
+            }
+        }
+    }
+    true
+}
+
 /// Calls the model router with a Coder-formatted prompt for `description`.
 async fn call_coder_via_router(
     router: &Router,
     truth: &SourceTruth,
     subgraph_text: &str,
     description: &str,
+    is_greenfield: bool,
 ) -> anyhow::Result<String> {
-    let truth_summary = format!(
-        "Task ID: {}\nClass: {:?}\nStrictness: {:?}",
-        truth.task_id, truth.task_class, truth.strictness
+    let mut truth_summary = format!(
+        "Task ID:     {}\nClass:       {:?}\nStrictness:  {:?}\nDescription: {}",
+        truth.task_id, truth.task_class, truth.strictness, truth.description
     );
+    for (answer_key, answer_value) in &truth.answers {
+        if !answer_value.trim().is_empty() {
+            truth_summary.push_str(&format!("\n{answer_key}: {answer_value}"));
+        }
+    }
 
-    let user_content = format!(
-        "## Source Truth\n{truth_summary}\n\n\
-         ## Code Context (CRG Subgraph)\n{subgraph_text}\n\n\
-         ## Task\n{description}\n\n\
-         Provide your changes as unified diffs, \
-         each preceded by a `// File: <relative/path>` comment."
-    );
+    let user_content = if is_greenfield {
+        format!(
+            "## Source Truth\n{truth_summary}\n\n\
+             ## Task\n{description}\n\n\
+             ## Greenfield Scaffolding Mode Active\n\
+             The workspace is currently EMPTY or has no symbols. Do NOT look for existing code or try to write a diff on existing functions.\n\
+             Instead, design the architecture and create the project files (e.g. Cargo.toml, src/main.rs) as COMPLETE new files.\n\
+             Follow the two-phase protocol from your system prompt. \
+             Phase 1: list zero grounded symbols (GROUNDED SYMBOLS: none) and specify 'INSERTION POINT: none'.\n\
+             Phase 2: produce full-file creation blocks prefixed with '// Create File: <relative/path>'."
+        )
+    } else {
+        format!(
+            "## Source Truth\n{truth_summary}\n\n\
+             ## Code Context (CRG Subgraph)\n{subgraph_text}\n\n\
+             ## Task\n{description}\n\n\
+             Follow the two-phase protocol from your system prompt. \
+             Phase 1: extract grounded symbols. Phase 2: produce unified diffs."
+        )
+    };
 
     let system_prompt = std::fs::read_to_string("crates/forge-agents/prompts/coder.md")
         .unwrap_or_else(|_| {
             "You are a Rust engineer. Write minimal, correct diffs for the task.".to_owned()
         });
+
+    let touches_sacred_files = truth
+        .answers
+        .get("sacred_files")
+        .is_some_and(|sacred_files_list| !sacred_files_list.trim().is_empty());
+
+    let prompt_tokens = yantra_tokenizer::count_tokens(&user_content)
+        + yantra_tokenizer::count_tokens(&system_prompt);
+    let tokens_estimated = prompt_tokens + 1024;
 
     let messages = vec![
         Message {
@@ -341,9 +400,9 @@ async fn call_coder_via_router(
     let task_desc = TaskDescription {
         description: description.to_owned(),
         class: truth.task_class,
-        tokens_estimated: 2048,
+        tokens_estimated,
         tool_calls_predicted: 0,
-        touches_sacred_files: false,
+        touches_sacred_files,
         multi_file: false,
     };
 

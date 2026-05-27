@@ -51,15 +51,42 @@ pub struct Import {
     pub imported_names: Vec<String>,
 }
 
+use std::sync::OnceLock;
+use tree_sitter::Query;
+
+static RUST_QUERY_CACHE: OnceLock<Result<Query, String>> = OnceLock::new();
+static PYTHON_QUERY_CACHE: OnceLock<Result<Query, String>> = OnceLock::new();
+static TYPESCRIPT_QUERY_CACHE: OnceLock<Result<Query, String>> = OnceLock::new();
+
+/// Walks a file's AST in a single pass to extract symbols, call sites, and imports.
+///
+/// # Errors
+///
+/// Returns `AstError::Query` when the language query fails to compile.
+pub fn extract_all(parsed: &ParsedFile) -> AstResult<(Vec<Symbol>, Vec<CallSite>, Vec<Import>)> {
+    validate_query(parsed)?;
+    let mut symbols = Vec::new();
+    let mut call_sites = Vec::new();
+    let mut imports = Vec::new();
+
+    collect_all(
+        parsed,
+        parsed.tree.root_node(),
+        &mut symbols,
+        &mut call_sites,
+        &mut imports,
+    );
+
+    Ok((symbols, call_sites, imports))
+}
+
 /// Extracts symbols from a parsed file.
 ///
 /// # Errors
 ///
 /// Returns `AstError::Query` when the language query fails to compile.
 pub fn extract_symbols(parsed: &ParsedFile) -> AstResult<Vec<Symbol>> {
-    validate_query(parsed)?;
-    let mut symbols = Vec::new();
-    collect_symbols(parsed, parsed.tree.root_node(), &mut symbols);
+    let (symbols, _, _) = extract_all(parsed)?;
     Ok(symbols)
 }
 
@@ -69,9 +96,7 @@ pub fn extract_symbols(parsed: &ParsedFile) -> AstResult<Vec<Symbol>> {
 ///
 /// Returns `AstError::Query` when the language query fails to compile.
 pub fn extract_calls(parsed: &ParsedFile) -> AstResult<Vec<CallSite>> {
-    validate_query(parsed)?;
-    let mut call_sites = Vec::new();
-    collect_calls(parsed, parsed.tree.root_node(), &mut call_sites);
+    let (_, call_sites, _) = extract_all(parsed)?;
     Ok(call_sites)
 }
 
@@ -81,36 +106,82 @@ pub fn extract_calls(parsed: &ParsedFile) -> AstResult<Vec<CallSite>> {
 ///
 /// Returns `AstError::Query` when the language query fails to compile.
 pub fn extract_imports(parsed: &ParsedFile) -> AstResult<Vec<Import>> {
-    validate_query(parsed)?;
-    let mut imports = Vec::new();
-    collect_imports(parsed, parsed.tree.root_node(), &mut imports);
+    let (_, _, imports) = extract_all(parsed)?;
     Ok(imports)
 }
 
 fn validate_query(parsed: &ParsedFile) -> AstResult<()> {
-    let query_source = match parsed.language {
-        LanguageKind::Rust => RUST_QUERY,
-        LanguageKind::Python => PYTHON_QUERY,
-        LanguageKind::TypeScript | LanguageKind::JavaScript => TYPESCRIPT_QUERY,
+    let cache = match parsed.language {
+        LanguageKind::Rust => &RUST_QUERY_CACHE,
+        LanguageKind::Python => &PYTHON_QUERY_CACHE,
+        LanguageKind::TypeScript | LanguageKind::JavaScript => &TYPESCRIPT_QUERY_CACHE,
     };
-    tree_sitter::Query::new(&parsed.language.tree_sitter_language(), query_source)
-        .map(|_| ())
-        .map_err(|error| AstError::Query {
+
+    let query_result = cache.get_or_init(|| {
+        let query_source = match parsed.language {
+            LanguageKind::Rust => RUST_QUERY,
+            LanguageKind::Python => PYTHON_QUERY,
+            LanguageKind::TypeScript | LanguageKind::JavaScript => TYPESCRIPT_QUERY,
+        };
+        Query::new(&parsed.language.tree_sitter_language(), query_source)
+            .map_err(|error| error.to_string())
+    });
+
+    match query_result {
+        Ok(_) => Ok(()),
+        Err(reason) => Err(AstError::Query {
             language: parsed.language.as_str(),
-            reason: error.to_string(),
-        })
+            reason: reason.clone(),
+        }),
+    }
 }
 
-fn collect_symbols(parsed: &ParsedFile, node: Node<'_>, symbols: &mut Vec<Symbol>) {
+fn collect_all(
+    parsed: &ParsedFile,
+    node: Node<'_>,
+    symbols: &mut Vec<Symbol>,
+    call_sites: &mut Vec<CallSite>,
+    imports: &mut Vec<Import>,
+) {
     if let Some((name_node, symbol_kind)) = symbol_name_and_kind(parsed, node) {
         if let Ok(name) = name_node.utf8_text(parsed.source.as_bytes()) {
             symbols.push(build_symbol(parsed, node, name, symbol_kind));
         }
     }
 
+    if matches!(node.kind(), "call_expression" | "call") {
+        let callee_node = node
+            .child_by_field_name("function")
+            .or_else(|| node.child_by_field_name("callee"))
+            .or_else(|| first_named_child(node));
+        if let Some(callee_node) = callee_node {
+            if let Some(callee_name) = callee_name(parsed, callee_node) {
+                call_sites.push(CallSite {
+                    caller_file: parsed.path.clone(),
+                    caller_line: node.start_position().row + 1,
+                    callee_name,
+                });
+            }
+        }
+    }
+
+    let is_import = match parsed.language {
+        LanguageKind::Rust => node.kind() == "use_declaration",
+        LanguageKind::Python => matches!(node.kind(), "import_statement" | "import_from_statement"),
+        LanguageKind::TypeScript | LanguageKind::JavaScript => {
+            node.kind() == "import_statement"
+                || node.kind() == "call_expression"
+                    && node_text(parsed, node).starts_with("require")
+        }
+    };
+
+    if is_import {
+        imports.push(import_from_node(parsed, node));
+    }
+
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_symbols(parsed, child, symbols);
+        collect_all(parsed, child, symbols, call_sites, imports);
     }
 }
 
@@ -195,50 +266,6 @@ fn build_symbol(parsed: &ParsedFile, node: Node<'_>, name: &str, kind: SymbolKin
         signature,
         docstring,
         language,
-    }
-}
-
-fn collect_calls(parsed: &ParsedFile, node: Node<'_>, call_sites: &mut Vec<CallSite>) {
-    if matches!(node.kind(), "call_expression" | "call") {
-        let callee_node = node
-            .child_by_field_name("function")
-            .or_else(|| node.child_by_field_name("callee"))
-            .or_else(|| first_named_child(node));
-        if let Some(callee_node) = callee_node {
-            if let Some(callee_name) = callee_name(parsed, callee_node) {
-                call_sites.push(CallSite {
-                    caller_file: parsed.path.clone(),
-                    caller_line: node.start_position().row + 1,
-                    callee_name,
-                });
-            }
-        }
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_calls(parsed, child, call_sites);
-    }
-}
-
-fn collect_imports(parsed: &ParsedFile, node: Node<'_>, imports: &mut Vec<Import>) {
-    let is_import = match parsed.language {
-        LanguageKind::Rust => node.kind() == "use_declaration",
-        LanguageKind::Python => matches!(node.kind(), "import_statement" | "import_from_statement"),
-        LanguageKind::TypeScript | LanguageKind::JavaScript => {
-            node.kind() == "import_statement"
-                || node.kind() == "call_expression"
-                    && node_text(parsed, node).starts_with("require")
-        }
-    };
-
-    if is_import {
-        imports.push(import_from_node(parsed, node));
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_imports(parsed, child, imports);
     }
 }
 
@@ -387,7 +414,15 @@ fn clean_doc_line(line: &str) -> String {
 
 fn node_text(parsed: &ParsedFile, node: Node<'_>) -> String {
     node.utf8_text(parsed.source.as_bytes())
-        .unwrap_or_default()
+        .unwrap_or_else(|utf8_error| {
+            tracing::warn!(
+                "UTF-8 decode failed for node at {}:{}: {}",
+                node.start_position().row,
+                node.start_position().column,
+                utf8_error
+            );
+            ""
+        })
         .to_string()
 }
 

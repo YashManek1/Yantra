@@ -80,7 +80,37 @@ CREATE TABLE IF NOT EXISTS graph_facts (
 );
 CREATE INDEX IF NOT EXISTS idx_facts_subject ON graph_facts(subject);
 CREATE INDEX IF NOT EXISTS idx_facts_validity ON graph_facts(valid_from, valid_until);
+
+CREATE TABLE IF NOT EXISTS symbol_embeddings (
+    symbol_id TEXT PRIMARY KEY,
+    vector BLOB NOT NULL
+);
 ";
+
+/// The type of relationship between two symbols in the code graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EdgeType {
+    /// A function call: A calls B.
+    Calls,
+    /// A module import: A imports B.
+    Imports,
+    /// A trait implementation: A implements trait B.
+    Implements,
+    /// A test covers: test A tests symbol B.
+    Tests,
+}
+
+impl EdgeType {
+    /// Returns the stable SQL string representation of this edge type.
+    pub fn as_sql_str(self) -> &'static str {
+        match self {
+            EdgeType::Calls => "CALLS",
+            EdgeType::Imports => "IMPORTS",
+            EdgeType::Implements => "IMPLEMENTS",
+            EdgeType::Tests => "TESTS",
+        }
+    }
+}
 
 /// Creates all CRG tables and indexes in `connection` using `CRG_SCHEMA_SQL`.
 ///

@@ -25,17 +25,22 @@ use rusqlite::{params, Connection};
 use uuid::Uuid;
 use yantra_core::SymbolId;
 
-use crate::schema::create_crg_schema;
+use crate::error::CrgResult;
+use crate::schema::{create_crg_schema, EdgeType};
 
+/// Walks a repository directory, extracts symbols, resolves relationships into
+/// edges, and incrementally re-indexes individual files on save.
 pub struct GraphBuilder {
     connection: Connection,
 }
 
 impl GraphBuilder {
+    /// Creates a new `GraphBuilder` wrapping the given `SQLite` connection.
     pub fn new(connection: Connection) -> Self {
         Self { connection }
     }
 
+    /// Returns a reference to the underlying `SQLite` connection.
     pub fn connection(&self) -> &Connection {
         &self.connection
     }
@@ -52,63 +57,87 @@ impl GraphBuilder {
     ///
     /// Returns an error if schema creation, file walking, symbol extraction, or
     /// any `SQLite` operation fails.
-    pub fn build_from_repo(&self, repository_root: &Path) -> anyhow::Result<()> {
+    pub fn build_from_repo(&self, repository_root: &Path) -> CrgResult<()> {
         create_crg_schema(&self.connection)?;
 
         let mut language_files_list = Vec::new();
         collect_supported_files(repository_root, &mut language_files_list)?;
 
-        for file_path in &language_files_list {
-            if let Ok(parsed_file) = yantra_ast::parse_file(file_path) {
-                if let Ok(symbols) = yantra_ast::extract_symbols(&parsed_file) {
-                    for symbol in symbols {
-                        yantra_ast::insert_symbol(&self.connection, &symbol)?;
-                    }
-                }
+        self.connection.execute("BEGIN TRANSACTION", [])?;
 
-                if let Ok(calls) = yantra_ast::extract_calls(&parsed_file) {
-                    for call_site in calls {
-                        let call_site_uuid = Uuid::new_v4().to_string();
-                        let file_identifier = file_id_for_path(file_path);
+        let result = (|| -> CrgResult<()> {
+            let mut insert_call_stmt = self.connection.prepare_cached(
+                "INSERT OR REPLACE INTO call_sites (id, caller_symbol_id, callee_name, callee_symbol_id, line) VALUES (?1, ?2, ?3, ?4, ?5)"
+            )?;
 
-                        let caller_symbol_id: Option<String> = self.connection.query_row(
-                            "SELECT id FROM symbols WHERE file_id = ?1 AND ?2 >= start_line AND ?2 <= end_line ORDER BY (end_line - start_line) ASC LIMIT 1",
-                            params![file_identifier, call_site.caller_line as i64],
-                            |row| row.get(0)
-                        ).ok();
+            let mut insert_import_stmt = self.connection.prepare_cached(
+                "INSERT OR REPLACE INTO imports (id, file_id, module_path, imported_names) VALUES (?1, ?2, ?3, ?4)"
+            )?;
 
-                        self.connection.execute(
-                            "INSERT OR REPLACE INTO call_sites (id, caller_symbol_id, callee_name, callee_symbol_id, line) VALUES (?1, ?2, ?3, ?4, ?5)",
-                            params![
+            for file_path in &language_files_list {
+                if let Ok(parsed_file) = yantra_ast::parse_file(file_path) {
+                    if let Ok((symbols, calls, imports)) = yantra_ast::extract_all(&parsed_file) {
+                        for symbol in &symbols {
+                            yantra_ast::insert_symbol(&self.connection, symbol)?;
+                        }
+
+                        for call_site in calls {
+                            let call_site_uuid = Uuid::new_v4().to_string();
+
+                            // Optimize: In-memory line-to-symbol range matching instead of SELECT queries!
+                            let mut caller_symbol_id: Option<String> = None;
+                            let mut smallest_range = usize::MAX;
+                            for symbol in &symbols {
+                                if call_site.caller_line >= symbol.start_line
+                                    && call_site.caller_line <= symbol.end_line
+                                {
+                                    let range = symbol.end_line - symbol.start_line;
+                                    if range < smallest_range {
+                                        smallest_range = range;
+                                        caller_symbol_id = Some(symbol.id.to_string());
+                                    }
+                                }
+                            }
+
+                            insert_call_stmt.execute(params![
                                 call_site_uuid,
                                 caller_symbol_id,
                                 call_site.callee_name,
                                 Option::<String>::None,
                                 call_site.caller_line as i64,
-                            ]
-                        )?;
-                    }
-                }
+                            ])?;
+                        }
 
-                if let Ok(imports) = yantra_ast::extract_imports(&parsed_file) {
-                    for import_declaration in imports {
-                        let import_uuid = Uuid::new_v4().to_string();
-                        let file_identifier = file_id_for_path(file_path);
-                        let imported_names_json =
-                            serde_json::to_string(&import_declaration.imported_names)?;
+                        for import_declaration in imports {
+                            let import_uuid = Uuid::new_v4().to_string();
+                            let file_identifier = file_id_for_path(file_path);
+                            let imported_names_json = serde_json::to_string(
+                                &import_declaration.imported_names,
+                            )
+                            .map_err(|serialization_error| {
+                                crate::error::CrgError::Serialization(
+                                    serialization_error.to_string(),
+                                )
+                            })?;
 
-                        self.connection.execute(
-                            "INSERT OR REPLACE INTO imports (id, file_id, module_path, imported_names) VALUES (?1, ?2, ?3, ?4)",
-                            params![
+                            insert_import_stmt.execute(params![
                                 import_uuid,
                                 file_identifier,
                                 import_declaration.module_path,
                                 imported_names_json,
-                            ]
-                        )?;
+                            ])?;
+                        }
                     }
                 }
             }
+            Ok(())
+        })();
+
+        if result.is_err() {
+            self.connection.execute("ROLLBACK", []).ok();
+            result?;
+        } else {
+            self.connection.execute("COMMIT", [])?;
         }
 
         self.resolve_call_sites()?;
@@ -124,207 +153,256 @@ impl GraphBuilder {
     /// # Errors
     ///
     /// Returns an error if reading the file, parsing, or any `SQLite` operation fails.
-    pub fn update_file(&self, file_path: &Path) -> anyhow::Result<()> {
+    pub fn update_file(&self, file_path: &Path) -> CrgResult<()> {
         let file_identifier = file_id_for_path(file_path);
 
-        let mut old_symbols_map = HashMap::new();
-        {
-            let mut statement = self.connection.prepare(
-                "SELECT id, name, kind, start_line, end_line, signature, docstring FROM symbols WHERE file_id = ?1"
-            )?;
-            let rows = statement.query_map([&file_identifier], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    (
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, i64>(4)?,
-                        row.get::<_, Option<String>>(5)?,
-                        row.get::<_, Option<String>>(6)?,
-                    ),
-                ))
-            })?;
-
-            for row_result in rows {
-                let (symbol_id, metadata) = row_result?;
-                old_symbols_map.insert(symbol_id, metadata);
-            }
+        let in_tx = !self.connection.is_autocommit();
+        if !in_tx {
+            self.connection.execute("BEGIN TRANSACTION", [])?;
         }
 
-        let parsed_file = match yantra_ast::parse_file(file_path) {
-            Ok(parsed) => parsed,
-            Err(_) => return Ok(()),
-        };
+        let result = (|| -> CrgResult<()> {
+            let mut old_symbols_map = HashMap::new();
+            {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT id, name, kind, start_line, end_line, signature, docstring FROM symbols WHERE file_id = ?1"
+                )?;
+                let rows = statement.query_map([&file_identifier], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        (
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                            row.get::<_, Option<String>>(5)?,
+                            row.get::<_, Option<String>>(6)?,
+                        ),
+                    ))
+                })?;
 
-        let new_symbols = yantra_ast::extract_symbols(&parsed_file).unwrap_or_default();
-        let new_symbols_ids: HashSet<String> = new_symbols
-            .iter()
-            .map(|symbol| symbol.id.to_string())
-            .collect();
-
-        for old_symbol_id in old_symbols_map.keys() {
-            if !new_symbols_ids.contains(old_symbol_id) {
-                self.connection.execute(
-                    "DELETE FROM call_sites WHERE caller_symbol_id = ?1",
-                    [old_symbol_id],
-                )?;
-                self.connection.execute(
-                    "UPDATE call_sites SET callee_symbol_id = NULL WHERE callee_symbol_id = ?1",
-                    [old_symbol_id],
-                )?;
-                self.connection.execute(
-                    "DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1",
-                    [old_symbol_id],
-                )?;
-                self.connection
-                    .execute("DELETE FROM symbols WHERE id = ?1", [old_symbol_id])?;
+                for row_result in rows {
+                    let (symbol_id, metadata) = row_result?;
+                    old_symbols_map.insert(symbol_id, metadata);
+                }
             }
-        }
 
-        for symbol in &new_symbols {
-            let symbol_id_str = symbol.id.to_string();
-            let is_new = !old_symbols_map.contains_key(&symbol_id_str);
-            let has_changed = if let Some(old_meta) = old_symbols_map.get(&symbol_id_str) {
-                let kind_json = serde_json::to_string(&symbol.kind).unwrap_or_default();
-                old_meta.0 != symbol.name
-                    || old_meta.1 != kind_json
-                    || old_meta.2 != symbol.start_line as i64
-                    || old_meta.3 != symbol.end_line as i64
-                    || old_meta.4 != symbol.signature
-                    || old_meta.5 != symbol.docstring
-            } else {
-                false
+            let parsed_file = match yantra_ast::parse_file(file_path) {
+                Ok(parsed) => parsed,
+                Err(_) => return Ok(()),
             };
 
-            if is_new || has_changed {
-                yantra_ast::insert_symbol(&self.connection, symbol)?;
+            let (new_symbols, calls, imports) =
+                yantra_ast::extract_all(&parsed_file).unwrap_or_default();
+
+            let new_symbols_ids: HashSet<String> = new_symbols
+                .iter()
+                .map(|symbol| symbol.id.to_string())
+                .collect();
+
+            let mut delete_calls_stmt = self
+                .connection
+                .prepare_cached("DELETE FROM call_sites WHERE caller_symbol_id = ?1")?;
+            let mut null_callee_stmt = self.connection.prepare_cached(
+                "UPDATE call_sites SET callee_symbol_id = NULL WHERE callee_symbol_id = ?1",
+            )?;
+            let mut delete_edges_stmt = self
+                .connection
+                .prepare_cached("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1")?;
+            let mut delete_symbol_stmt = self
+                .connection
+                .prepare_cached("DELETE FROM symbols WHERE id = ?1")?;
+            let mut delete_embedding_stmt = self
+                .connection
+                .prepare_cached("DELETE FROM symbol_embeddings WHERE symbol_id = ?1")?;
+
+            for old_symbol_id in old_symbols_map.keys() {
+                if !new_symbols_ids.contains(old_symbol_id) {
+                    delete_calls_stmt.execute([old_symbol_id])?;
+                    null_callee_stmt.execute([old_symbol_id])?;
+                    delete_edges_stmt.execute([old_symbol_id])?;
+                    delete_symbol_stmt.execute([old_symbol_id])?;
+                    delete_embedding_stmt.execute([old_symbol_id])?;
+                }
             }
-        }
 
-        self.connection.execute(
-            "DELETE FROM call_sites WHERE caller_symbol_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
-            [&file_identifier]
-        )?;
-        if let Ok(calls) = yantra_ast::extract_calls(&parsed_file) {
-            for call_site in calls {
-                let call_site_uuid = Uuid::new_v4().to_string();
-                let caller_symbol_id: Option<String> = self.connection.query_row(
-                    "SELECT id FROM symbols WHERE file_id = ?1 AND ?2 >= start_line AND ?2 <= end_line ORDER BY (end_line - start_line) ASC LIMIT 1",
-                    params![file_identifier, call_site.caller_line as i64],
-                    |row| row.get(0)
-                ).ok();
+            for symbol in &new_symbols {
+                let symbol_id_str = symbol.id.to_string();
+                let is_new = !old_symbols_map.contains_key(&symbol_id_str);
+                let has_changed = if let Some(old_meta) = old_symbols_map.get(&symbol_id_str) {
+                    let kind_json = serde_json::to_string(&symbol.kind).unwrap_or_default();
+                    old_meta.0 != symbol.name
+                        || old_meta.1 != kind_json
+                        || old_meta.2 != symbol.start_line as i64
+                        || old_meta.3 != symbol.end_line as i64
+                        || old_meta.4 != symbol.signature
+                        || old_meta.5 != symbol.docstring
+                } else {
+                    false
+                };
 
-                self.connection.execute(
-                    "INSERT OR REPLACE INTO call_sites (id, caller_symbol_id, callee_name, callee_symbol_id, line) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![
+                if is_new || has_changed {
+                    yantra_ast::insert_symbol(&self.connection, symbol)?;
+                    delete_embedding_stmt.execute([&symbol_id_str])?;
+                }
+            }
+
+            self.connection.execute(
+                "DELETE FROM call_sites WHERE caller_symbol_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
+                [&file_identifier]
+            )?;
+
+            if !calls.is_empty() {
+                let mut insert_call_stmt = self.connection.prepare_cached(
+                    "INSERT OR REPLACE INTO call_sites (id, caller_symbol_id, callee_name, callee_symbol_id, line) VALUES (?1, ?2, ?3, ?4, ?5)"
+                )?;
+
+                for call_site in calls {
+                    let call_site_uuid = Uuid::new_v4().to_string();
+
+                    // Optimize: In-memory range matching!
+                    let mut caller_symbol_id: Option<String> = None;
+                    let mut smallest_range = usize::MAX;
+                    for symbol in &new_symbols {
+                        if call_site.caller_line >= symbol.start_line
+                            && call_site.caller_line <= symbol.end_line
+                        {
+                            let range = symbol.end_line - symbol.start_line;
+                            if range < smallest_range {
+                                smallest_range = range;
+                                caller_symbol_id = Some(symbol.id.to_string());
+                            }
+                        }
+                    }
+
+                    insert_call_stmt.execute(params![
                         call_site_uuid,
                         caller_symbol_id,
                         call_site.callee_name,
                         Option::<String>::None,
                         call_site.caller_line as i64,
-                    ]
-                )?;
+                    ])?;
+                }
             }
-        }
 
-        self.connection
-            .execute("DELETE FROM imports WHERE file_id = ?1", [&file_identifier])?;
-        if let Ok(imports) = yantra_ast::extract_imports(&parsed_file) {
-            for import_declaration in imports {
-                let import_uuid = Uuid::new_v4().to_string();
-                let imported_names_json =
-                    serde_json::to_string(&import_declaration.imported_names)?;
+            self.connection
+                .execute("DELETE FROM imports WHERE file_id = ?1", [&file_identifier])?;
+            if !imports.is_empty() {
+                let mut insert_import_stmt = self.connection.prepare_cached(
+                    "INSERT OR REPLACE INTO imports (id, file_id, module_path, imported_names) VALUES (?1, ?2, ?3, ?4)"
+                )?;
 
-                self.connection.execute(
-                    "INSERT OR REPLACE INTO imports (id, file_id, module_path, imported_names) VALUES (?1, ?2, ?3, ?4)",
-                    params![
+                for import_declaration in imports {
+                    let import_uuid = Uuid::new_v4().to_string();
+                    let imported_names_json = serde_json::to_string(
+                        &import_declaration.imported_names,
+                    )
+                    .map_err(|serialization_error| {
+                        crate::error::CrgError::Serialization(serialization_error.to_string())
+                    })?;
+
+                    insert_import_stmt.execute(params![
                         import_uuid,
                         file_identifier,
                         import_declaration.module_path,
                         imported_names_json,
-                    ]
+                    ])?;
+                }
+            }
+
+            self.resolve_call_sites()?;
+
+            let mut affected_symbol_ids = HashSet::new();
+            {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT to_id FROM edges WHERE from_id IN (SELECT id FROM symbols WHERE file_id = ?1)"
                 )?;
+                let rows =
+                    statement.query_map([&file_identifier], |row| row.get::<_, String>(0))?;
+                for row_result in rows {
+                    affected_symbol_ids.insert(row_result?);
+                }
             }
-        }
+            {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT from_id FROM edges WHERE to_id IN (SELECT id FROM symbols WHERE file_id = ?1)"
+                )?;
+                let rows =
+                    statement.query_map([&file_identifier], |row| row.get::<_, String>(0))?;
+                for row_result in rows {
+                    affected_symbol_ids.insert(row_result?);
+                }
+            }
 
-        self.resolve_call_sites()?;
-
-        let mut affected_symbol_ids = HashSet::new();
-        {
-            let mut statement = self.connection.prepare(
-                "SELECT to_id FROM edges WHERE from_id IN (SELECT id FROM symbols WHERE file_id = ?1)"
+            self.connection.execute(
+                "DELETE FROM edges WHERE from_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
+                [&file_identifier],
             )?;
-            let rows = statement.query_map([&file_identifier], |row| row.get::<_, String>(0))?;
-            for row_result in rows {
-                affected_symbol_ids.insert(row_result?);
-            }
-        }
-        {
-            let mut statement = self.connection.prepare(
-                "SELECT from_id FROM edges WHERE to_id IN (SELECT id FROM symbols WHERE file_id = ?1)"
+            self.connection.execute(
+                "DELETE FROM edges WHERE to_id IN (SELECT id FROM symbols WHERE file_id = ?1) AND edge_type = ?2",
+                params![&file_identifier, EdgeType::Calls.as_sql_str()]
             )?;
-            let rows = statement.query_map([&file_identifier], |row| row.get::<_, String>(0))?;
-            for row_result in rows {
-                affected_symbol_ids.insert(row_result?);
+
+            self.rebuild_edges()?;
+
+            for symbol_id_str in &new_symbols_ids {
+                affected_symbol_ids.insert(symbol_id_str.clone());
             }
-        }
+            {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT to_id FROM edges WHERE from_id IN (SELECT id FROM symbols WHERE file_id = ?1)"
+                )?;
+                let rows =
+                    statement.query_map([&file_identifier], |row| row.get::<_, String>(0))?;
+                for row_result in rows {
+                    affected_symbol_ids.insert(row_result?);
+                }
+            }
+            {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT from_id FROM edges WHERE to_id IN (SELECT id FROM symbols WHERE file_id = ?1)"
+                )?;
+                let rows =
+                    statement.query_map([&file_identifier], |row| row.get::<_, String>(0))?;
+                for row_result in rows {
+                    affected_symbol_ids.insert(row_result?);
+                }
+            }
 
-        self.connection.execute(
-            "DELETE FROM edges WHERE from_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
-            [&file_identifier],
-        )?;
-        self.connection.execute(
-            "DELETE FROM edges WHERE to_id IN (SELECT id FROM symbols WHERE file_id = ?1) AND edge_type = 'CALLS'",
-            [&file_identifier]
-        )?;
-
-        self.rebuild_edges()?;
-
-        for symbol_id_str in &new_symbols_ids {
-            affected_symbol_ids.insert(symbol_id_str.clone());
-        }
-        {
-            let mut statement = self.connection.prepare(
-                "SELECT to_id FROM edges WHERE from_id IN (SELECT id FROM symbols WHERE file_id = ?1)"
+            let mut update_statement = self.connection.prepare_cached(
+                "UPDATE symbols
+                 SET connectivity_score = (
+                     (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'CALLS') * 2 +
+                     (SELECT COUNT(*) FROM edges WHERE from_id = symbols.id AND edge_type = 'CALLS') * 2 +
+                     (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'IMPORTS') * 2 +
+                     (SELECT COUNT(*) FROM edges WHERE to_id = symbols.file_id AND edge_type = 'IMPORTS')
+                 )
+                 WHERE id = ?1"
             )?;
-            let rows = statement.query_map([&file_identifier], |row| row.get::<_, String>(0))?;
-            for row_result in rows {
-                affected_symbol_ids.insert(row_result?);
-            }
-        }
-        {
-            let mut statement = self.connection.prepare(
-                "SELECT from_id FROM edges WHERE to_id IN (SELECT id FROM symbols WHERE file_id = ?1)"
-            )?;
-            let rows = statement.query_map([&file_identifier], |row| row.get::<_, String>(0))?;
-            for row_result in rows {
-                affected_symbol_ids.insert(row_result?);
-            }
-        }
 
-        let mut update_statement = self.connection.prepare(
-            "UPDATE symbols
-             SET connectivity_score = (
-                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'CALLS') * 2 +
-                 (SELECT COUNT(*) FROM edges WHERE from_id = symbols.id AND edge_type = 'CALLS') * 2 +
-                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.id AND edge_type = 'IMPORTS') * 2 +
-                 (SELECT COUNT(*) FROM edges WHERE to_id = symbols.file_id AND edge_type = 'IMPORTS')
-             )
-             WHERE id = ?1"
-        )?;
+            for symbol_identifier in affected_symbol_ids {
+                update_statement.execute(params![symbol_identifier])?;
+            }
 
-        for symbol_identifier in affected_symbol_ids {
-            update_statement.execute(params![symbol_identifier])?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            if !in_tx {
+                self.connection.execute("ROLLBACK", []).ok();
+            }
+            result?;
+        } else if !in_tx {
+            self.connection.execute("COMMIT", [])?;
         }
 
         Ok(())
     }
 
-    fn resolve_call_sites(&self) -> anyhow::Result<()> {
+    fn resolve_call_sites(&self) -> CrgResult<()> {
         let mut call_sites_to_resolve = Vec::new();
         {
-            let mut statement = self.connection.prepare(
+            let mut statement = self.connection.prepare_cached(
                 "SELECT cs.id, cs.callee_name, f.path
                  FROM call_sites cs
                  JOIN symbols s ON cs.caller_symbol_id = s.id
@@ -344,56 +422,71 @@ impl GraphBuilder {
             }
         }
 
-        for (call_site_id, callee_name, file_path_str) in call_sites_to_resolve {
-            let file_path = Path::new(&file_path_str);
-            let file_identifier = file_id_for_path(file_path);
+        let in_tx = !self.connection.is_autocommit();
+        if !in_tx {
+            self.connection.execute("BEGIN TRANSACTION", [])?;
+        }
 
-            let mut resolved_id: Option<String> = self
+        let result = (|| -> CrgResult<()> {
+            let mut stmt_file = self.connection.prepare_cached(
+                "SELECT id FROM symbols WHERE file_id = ?1 AND name = ?2 LIMIT 1",
+            )?;
+            let mut stmt_dir = self.connection.prepare_cached(
+                "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path LIKE ?1 AND s.name = ?2 LIMIT 1"
+            )?;
+            let mut stmt_any = self
                 .connection
-                .query_row(
-                    "SELECT id FROM symbols WHERE file_id = ?1 AND name = ?2 LIMIT 1",
-                    params![file_identifier, callee_name],
-                    |row| row.get(0),
-                )
-                .ok();
+                .prepare_cached("SELECT id FROM symbols WHERE name = ?1 LIMIT 1")?;
+            let mut stmt_update = self
+                .connection
+                .prepare_cached("UPDATE call_sites SET callee_symbol_id = ?1 WHERE id = ?2")?;
 
-            if resolved_id.is_none() {
-                if let Some(directory_path) = file_path.parent() {
-                    let directory_pattern = format!("{}%", directory_path.to_string_lossy());
-                    resolved_id = self.connection.query_row(
-                        "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path LIKE ?1 AND s.name = ?2 LIMIT 1",
-                        params![directory_pattern, callee_name],
-                        |row| row.get(0)
-                    ).ok();
+            for (call_site_id, callee_name, file_path_str) in call_sites_to_resolve {
+                let file_path = Path::new(&file_path_str);
+                let file_identifier = file_id_for_path(file_path);
+
+                let mut resolved_id: Option<String> = stmt_file
+                    .query_row(params![file_identifier, callee_name], |row| row.get(0))
+                    .ok();
+
+                if resolved_id.is_none() {
+                    if let Some(directory_path) = file_path.parent() {
+                        let directory_pattern = format!("{}%", directory_path.to_string_lossy());
+                        resolved_id = stmt_dir
+                            .query_row(params![directory_pattern, callee_name], |row| row.get(0))
+                            .ok();
+                    }
+                }
+
+                if resolved_id.is_none() {
+                    resolved_id = stmt_any
+                        .query_row(params![callee_name], |row| row.get(0))
+                        .ok();
+                }
+
+                if let Some(callee_symbol_id) = resolved_id {
+                    stmt_update.execute(params![callee_symbol_id, call_site_id])?;
                 }
             }
+            Ok(())
+        })();
 
-            if resolved_id.is_none() {
-                resolved_id = self
-                    .connection
-                    .query_row(
-                        "SELECT id FROM symbols WHERE name = ?1 LIMIT 1",
-                        params![callee_name],
-                        |row| row.get(0),
-                    )
-                    .ok();
+        if result.is_err() {
+            if !in_tx {
+                self.connection.execute("ROLLBACK", []).ok();
             }
-
-            if let Some(callee_symbol_id) = resolved_id {
-                self.connection.execute(
-                    "UPDATE call_sites SET callee_symbol_id = ?1 WHERE id = ?2",
-                    params![callee_symbol_id, call_site_id],
-                )?;
-            }
+            result?;
+        } else if !in_tx {
+            self.connection.execute("COMMIT", [])?;
         }
 
         Ok(())
     }
 
-    fn rebuild_edges(&self) -> anyhow::Result<()> {
+    fn rebuild_edges(&self) -> CrgResult<()> {
         let mut resolved_calls = Vec::new();
         {
-            let mut statement = self.connection.prepare(
+            let mut statement = self.connection.prepare_cached(
                 "SELECT caller_symbol_id, callee_symbol_id FROM call_sites WHERE caller_symbol_id IS NOT NULL AND callee_symbol_id IS NOT NULL"
             )?;
             let rows = statement.query_map([], |row| {
@@ -403,162 +496,190 @@ impl GraphBuilder {
                 resolved_calls.push(row_result?);
             }
         }
-        for (from_id, to_id) in resolved_calls {
-            self.connection.execute(
-                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, weight) VALUES (?1, ?2, 'CALLS', 1)",
-                params![from_id, to_id]
+
+        let in_tx = !self.connection.is_autocommit();
+        if !in_tx {
+            self.connection.execute("BEGIN TRANSACTION", [])?;
+        }
+
+        let result = (|| -> CrgResult<()> {
+            let mut insert_stmt = self.connection.prepare_cached(
+                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, weight) VALUES (?1, ?2, ?3, 1)"
             )?;
-        }
 
-        let mut imports_list = Vec::new();
-        {
-            let mut statement = self
-                .connection
-                .prepare("SELECT file_id, module_path, imported_names FROM imports")?;
-            let rows = statement.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?;
-            for row_result in rows {
-                imports_list.push(row_result?);
+            for (from_id, to_id) in resolved_calls {
+                insert_stmt.execute(params![from_id, to_id, EdgeType::Calls.as_sql_str()])?;
             }
-        }
-        for (importing_file_id, module_path, imported_names_json) in imports_list {
-            let imported_names: Vec<String> =
-                serde_json::from_str(&imported_names_json).unwrap_or_default();
-            let target_file_pattern = format!("%{}", module_path.replace('.', "/"));
-            let target_file_id: Option<String> = self
-                .connection
-                .query_row(
-                    "SELECT id FROM files WHERE path LIKE ?1 OR path LIKE ?2 LIMIT 1",
-                    params![
-                        format!("{target_file_pattern}.rs"),
-                        format!("{target_file_pattern}.py"),
-                    ],
-                    |row| row.get(0),
-                )
-                .ok();
 
-            if let Some(target_file_id) = target_file_id {
-                self.connection.execute(
-                    "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, weight) VALUES (?1, ?2, 'IMPORTS', 1)",
-                    params![importing_file_id, target_file_id]
-                )?;
-
-                for name in imported_names {
-                    let target_symbol_id: Option<String> = self
-                        .connection
-                        .query_row(
-                            "SELECT id FROM symbols WHERE file_id = ?1 AND name = ?2 LIMIT 1",
-                            params![target_file_id, name],
-                            |row| row.get(0),
-                        )
-                        .ok();
-
-                    if let Some(target_symbol_id) = target_symbol_id {
-                        self.connection.execute(
-                            "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, weight) VALUES (?1, ?2, 'IMPORTS', 1)",
-                            params![importing_file_id, target_symbol_id]
-                        )?;
-                    }
-                }
-            }
-        }
-
-        let mut rust_impls = Vec::new();
-        {
-            let mut statement = self.connection.prepare(
-                "SELECT id, signature FROM symbols WHERE kind = '\"Impl\"' AND signature IS NOT NULL"
-            )?;
-            let rows = statement.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
-            for row_result in rows {
-                rust_impls.push(row_result?);
-            }
-        }
-        for (impl_symbol_id, signature) in rust_impls {
-            if signature.starts_with("impl") {
-                if let Some(for_index) = signature.find(" for ") {
-                    let trait_part = &signature["impl".len()..for_index];
-                    let struct_part = &signature[for_index + " for ".len()..];
-
-                    let trait_name = clean_rust_type_name(trait_part);
-                    let struct_name = clean_rust_type_name(struct_part);
-
-                    let trait_symbol_id: Option<String> = self
-                        .connection
-                        .query_row(
-                            "SELECT id FROM symbols WHERE name = ?1 AND kind = '\"Trait\"' LIMIT 1",
-                            params![trait_name],
-                            |row| row.get(0),
-                        )
-                        .ok();
-
-                    let struct_symbol_id: Option<String> = self.connection.query_row(
-                        "SELECT id FROM symbols WHERE name = ?1 AND kind = '\"Struct\"' LIMIT 1",
-                        params![struct_name],
-                        |row| row.get(0)
-                    ).ok();
-
-                    if let (Some(struct_id), Some(trait_id)) = (struct_symbol_id, trait_symbol_id) {
-                        self.connection.execute(
-                            "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, weight) VALUES (?1, ?2, 'IMPLEMENTS', 1)",
-                            params![struct_id, trait_id]
-                        )?;
-                        self.connection.execute(
-                            "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, weight) VALUES (?1, ?2, 'IMPLEMENTS', 1)",
-                            params![impl_symbol_id, struct_id]
-                        )?;
-                    }
-                }
-            }
-        }
-
-        let mut test_symbols = Vec::new();
-        {
-            let mut statement = self.connection.prepare(
-                "SELECT s.id, s.name, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path LIKE '%tests%' OR s.name LIKE 'test_%'"
-            )?;
-            let rows = statement.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?;
-            for row_result in rows {
-                test_symbols.push(row_result?);
-            }
-        }
-        for (test_symbol_id, name, _) in test_symbols {
-            if name.starts_with("test_") {
-                let target_name = name.strip_prefix("test_").unwrap_or(&name);
-                let target_symbol_id: Option<String> = self
+            let mut imports_list = Vec::new();
+            {
+                let mut statement = self
                     .connection
+                    .prepare_cached("SELECT file_id, module_path, imported_names FROM imports")?;
+                let rows = statement.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+                for row_result in rows {
+                    imports_list.push(row_result?);
+                }
+            }
+
+            let mut query_file_stmt = self.connection.prepare_cached(
+                "SELECT id FROM files WHERE path LIKE ?1 OR path LIKE ?2 LIMIT 1",
+            )?;
+            let mut query_symbol_stmt = self.connection.prepare_cached(
+                "SELECT id FROM symbols WHERE file_id = ?1 AND name = ?2 LIMIT 1",
+            )?;
+
+            for (importing_file_id, module_path, imported_names_json) in imports_list {
+                let imported_names: Vec<String> =
+                    serde_json::from_str(&imported_names_json).unwrap_or_default();
+                let target_file_pattern = format!("%{}", module_path.replace('.', "/"));
+                let target_file_id: Option<String> = query_file_stmt
                     .query_row(
-                        "SELECT id FROM symbols WHERE name = ?1 LIMIT 1",
-                        params![target_name],
+                        params![
+                            format!("{target_file_pattern}.rs"),
+                            format!("{target_file_pattern}.py"),
+                        ],
                         |row| row.get(0),
                     )
                     .ok();
 
-                if let Some(target_symbol_id) = target_symbol_id {
-                    self.connection.execute(
-                        "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, weight) VALUES (?1, ?2, 'TESTS', 1)",
-                        params![test_symbol_id, target_symbol_id]
-                    )?;
+                if let Some(target_file_id) = target_file_id {
+                    insert_stmt.execute(params![
+                        importing_file_id,
+                        target_file_id,
+                        EdgeType::Imports.as_sql_str()
+                    ])?;
+
+                    for name in imported_names {
+                        let target_symbol_id: Option<String> = query_symbol_stmt
+                            .query_row(params![target_file_id, name], |row| row.get(0))
+                            .ok();
+
+                        if let Some(target_symbol_id) = target_symbol_id {
+                            insert_stmt.execute(params![
+                                importing_file_id,
+                                target_symbol_id,
+                                EdgeType::Imports.as_sql_str()
+                            ])?;
+                        }
+                    }
                 }
             }
+
+            let mut rust_impls = Vec::new();
+            {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT id, signature FROM symbols WHERE kind = '\"Impl\"' AND signature IS NOT NULL"
+                )?;
+                let rows = statement.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                for row_result in rows {
+                    rust_impls.push(row_result?);
+                }
+            }
+
+            let mut query_trait_stmt = self.connection.prepare_cached(
+                "SELECT id FROM symbols WHERE name = ?1 AND kind = '\"Trait\"' LIMIT 1",
+            )?;
+            let mut query_struct_stmt = self.connection.prepare_cached(
+                "SELECT id FROM symbols WHERE name = ?1 AND kind = '\"Struct\"' LIMIT 1",
+            )?;
+
+            for (impl_symbol_id, signature) in rust_impls {
+                if signature.starts_with("impl") {
+                    if let Some(for_index) = signature.find(" for ") {
+                        let trait_part = &signature["impl".len()..for_index];
+                        let struct_part = &signature[for_index + " for ".len()..];
+
+                        let trait_name = clean_rust_type_name(trait_part);
+                        let struct_name = clean_rust_type_name(struct_part);
+
+                        let trait_symbol_id: Option<String> = query_trait_stmt
+                            .query_row(params![trait_name], |row| row.get(0))
+                            .ok();
+
+                        let struct_symbol_id: Option<String> = query_struct_stmt
+                            .query_row(params![struct_name], |row| row.get(0))
+                            .ok();
+
+                        if let (Some(struct_id), Some(trait_id)) =
+                            (struct_symbol_id, trait_symbol_id)
+                        {
+                            insert_stmt.execute(params![
+                                struct_id,
+                                trait_id,
+                                EdgeType::Implements.as_sql_str()
+                            ])?;
+                            insert_stmt.execute(params![
+                                impl_symbol_id,
+                                struct_id,
+                                EdgeType::Implements.as_sql_str()
+                            ])?;
+                        }
+                    }
+                }
+            }
+
+            let mut test_symbols = Vec::new();
+            {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT s.id, s.name, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path LIKE '%tests%' OR s.name LIKE 'test_%'"
+                )?;
+                let rows = statement.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+                for row_result in rows {
+                    test_symbols.push(row_result?);
+                }
+            }
+
+            let mut query_test_stmt = self
+                .connection
+                .prepare_cached("SELECT id FROM symbols WHERE name = ?1 LIMIT 1")?;
+
+            for (test_symbol_id, name, _) in test_symbols {
+                if name.starts_with("test_") {
+                    let target_name = name.strip_prefix("test_").unwrap_or(&name);
+                    let target_symbol_id: Option<String> = query_test_stmt
+                        .query_row(params![target_name], |row| row.get(0))
+                        .ok();
+
+                    if let Some(target_symbol_id) = target_symbol_id {
+                        insert_stmt.execute(params![
+                            test_symbol_id,
+                            target_symbol_id,
+                            EdgeType::Tests.as_sql_str()
+                        ])?;
+                    }
+                }
+            }
+            Ok(())
+        })();
+
+        if result.is_err() {
+            if !in_tx {
+                self.connection.execute("ROLLBACK", []).ok();
+            }
+            result?;
+        } else if !in_tx {
+            self.connection.execute("COMMIT", [])?;
         }
 
         Ok(())
     }
 
-    fn recompute_all_connectivity_scores(&self) -> anyhow::Result<()> {
+    fn recompute_all_connectivity_scores(&self) -> CrgResult<()> {
         self.connection.execute(
             "UPDATE symbols
              SET connectivity_score = (
@@ -573,7 +694,7 @@ impl GraphBuilder {
     }
 }
 
-fn collect_supported_files(path: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+fn collect_supported_files(path: &Path, files: &mut Vec<PathBuf>) -> CrgResult<()> {
     if path.is_file() {
         if yantra_ast::LanguageRegistry::language_for_path(path).is_some() {
             files.push(path.to_path_buf());

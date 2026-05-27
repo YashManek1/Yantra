@@ -1,10 +1,22 @@
+//! # forge-ast: Integration Tests
+//!
+//! Validates symbol extraction, call-site detection, import parsing, and SQLite
+//! round-trip correctness for all supported language grammars.
+//!
+//! ## Input
+//! - Source fixture files under `tests/fixtures/`
+//! - In-memory `SQLite` connections via `rusqlite`
+//!
+//! ## Output
+//! - Property-test and unit-test assertion results
+
 use std::path::Path;
 
 use proptest::prelude::*;
 use rusqlite::Connection;
 use yantra_ast::{
-    extract_calls, extract_imports, extract_symbols, insert_symbol, parse_file, query_symbol,
-    LanguageKind, Symbol, SymbolKind,
+    extract_calls, extract_imports, extract_symbols, initialize_schema, insert_symbol, parse_file,
+    query_symbol, LanguageKind, Symbol, SymbolKind,
 };
 use yantra_core::SymbolId;
 
@@ -82,6 +94,7 @@ proptest! {
         docstring in "[A-Za-z0-9_ .,]{0,80}",
     ) {
         let database = Connection::open_in_memory().unwrap();
+        initialize_schema(&database).unwrap();
         let symbol = Symbol {
             id: SymbolId::from_parts("src/lib.rs", &name, SymbolKind::Function.as_str()),
             name,

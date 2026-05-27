@@ -72,7 +72,13 @@ impl SqliteSpanLayer {
     ///
     /// Returns `ObsError::Database` when the database cannot be opened or
     /// trace schema setup fails.
-    pub fn new(traces_path: PathBuf, session_id: SessionId) -> ObsResult<Self> {
+    ///
+    /// # Invariant
+    ///
+    /// This constructor performs synchronous filesystem I/O (`create_dir_all`
+    /// and `Connection::open`). It must be called before the Tokio runtime
+    /// starts, or from a `spawn_blocking` context.
+    pub fn new(traces_path: &std::path::Path, session_id: SessionId) -> ObsResult<Self> {
         if let Some(parent_directory) = traces_path.parent() {
             std::fs::create_dir_all(parent_directory).map_err(|source| {
                 ObsError::Core(yantra_core::CoreError::PathIo {
@@ -83,6 +89,7 @@ impl SqliteSpanLayer {
         }
         let connection = Connection::open(traces_path)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
+        crate::traces::ensure_traces_schema(&connection)?;
         Ok(Self {
             database: std::sync::Arc::new(Mutex::new(connection)),
             session_id,
@@ -102,7 +109,7 @@ pub fn init_tracing(config: TracingConfig) -> ObsResult<TracingGuard> {
         .as_path()
         .join(".yantra")
         .join("traces.sqlite");
-    let sqlite_layer = SqliteSpanLayer::new(traces_path.clone(), config.session_id)?;
+    let sqlite_layer = SqliteSpanLayer::new(&traces_path, config.session_id)?;
     let env_filter =
         EnvFilter::try_new(config.env_filter).unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -166,7 +173,9 @@ where
 
         let span = observed_span.to_span(self.session_id);
         let database = self.database.lock();
-        let _record_result = record_span(&database, &span);
+        if let Err(span_persist_error) = record_span(&database, &span) {
+            tracing::warn!("span persistence failed: {}", span_persist_error);
+        }
     }
 }
 

@@ -5,15 +5,14 @@
 //! required tools (cargo, etc.) are not on PATH.
 
 use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
 
 use chrono::Utc;
 use yantra_core::{Strictness, TaskClass, TaskId};
 use yantra_stvp::SourceTruth;
 use yantra_verifier::{
     ast_symbol_cross_check, compare_test_outcomes, parse_cargo_json_output, parse_test_outcome,
-    Diff, DifferentialReport, TestOutcomeLabel, VerificationContext,
-    VerificationPipeline, VerificationResult, VerificationStage, ViolationSeverity,
+    Diff, DifferentialReport, TestOutcomeLabel, VerificationContext, VerificationPipeline,
+    VerificationResult, VerificationStage, ViolationSeverity,
 };
 
 fn make_source_truth_with_answers(answers: &[(&str, &str)]) -> SourceTruth {

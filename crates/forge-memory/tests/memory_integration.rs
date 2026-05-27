@@ -289,9 +289,16 @@ async fn heartbeat_runs_and_stops_cleanly() {
     tokio::time::sleep(Duration::from_millis(80)).await;
     handle.stop();
 
-    let summary = recall_store
-        .get_session_summary(&session_id)
-        .expect("query succeeds");
+    let mut summary = None;
+    for _ in 0..10 {
+        summary = recall_store
+            .get_session_summary(&session_id)
+            .expect("query succeeds");
+        if summary.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(15)).await;
+    }
     assert!(
         summary.is_some(),
         "heartbeat should have auto-summarized the session"

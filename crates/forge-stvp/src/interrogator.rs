@@ -21,14 +21,16 @@
 //!   the `SourceTruth` (token issuance is the orchestrator's responsibility)
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use chrono::Utc;
 use tracing::instrument;
-use yantra_core::{ProjectRoot, Strictness, TaskClass, TaskId};
+use yantra_core::{AugmenterPort, ProjectRoot, Strictness, TaskClass, TaskId};
 
 use crate::classifier::TaskClassifier;
 use crate::error::StvpError;
-use crate::questionnaire::{questionnaire_for_class, Question};
+use crate::question_augmenter::QuestionAugmenter;
+use crate::questionnaire::Question;
 use crate::source_truth::SourceTruth;
 
 /// Determines the STVP strictness mode for a given task class.
@@ -62,13 +64,24 @@ pub trait QuestionnaireUi: Send + Sync {
 /// Runs the STVP interrogation flow for a single task description.
 pub struct Interrogator {
     project_root: ProjectRoot,
+    pub augmenter: Option<Arc<dyn AugmenterPort>>,
 }
 
 impl Interrogator {
     /// Creates an `Interrogator` that writes source-truth artifacts under
     /// `<project_root>/.yantra/source_truth/`.
     pub fn new(project_root: ProjectRoot) -> Self {
-        Self { project_root }
+        Self {
+            project_root,
+            augmenter: None,
+        }
+    }
+
+    /// Builder method to inject an LLM augmenter implementation.
+    #[must_use]
+    pub fn with_augmenter(mut self, augmenter: Arc<dyn AugmenterPort>) -> Self {
+        self.augmenter = Some(augmenter);
+        self
     }
 
     /// Classifies `description`, runs the appropriate questionnaire via `ui`,
@@ -81,7 +94,7 @@ impl Interrogator {
     /// - `StvpError::QuestionnaireAborted` — the UI signalled an abort
     /// - Storage or serialization errors from `source_truth::SourceTruth::store`
     #[instrument(skip(self, ui), fields(description = %description))]
-    pub fn ask(
+    pub async fn ask(
         &self,
         description: &str,
         ui: &dyn QuestionnaireUi,
@@ -93,16 +106,59 @@ impl Interrogator {
 
         let task_class = TaskClassifier::classify(trimmed_description);
         let strictness = strictness_for_class(task_class);
-        let questionnaire = questionnaire_for_class(task_class);
+
+        // 1. Gather hardcoded base questions
+        let mut base_questions = crate::questionnaire::base_questions_for_class(task_class);
+
+        // 2. Gather trigger questions based on description keywords
+        let trigger_questions =
+            crate::questionnaire::trigger_questions_for_task(task_class, trimmed_description);
+        base_questions.extend(trigger_questions);
+
+        // Deduplicate questions and build the initial stable list of IDs
+        let mut existing_question_ids = Vec::new();
+        let mut questionnaire_list = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+
+        for question in base_questions {
+            if seen_ids.insert(question.id.clone()) {
+                existing_question_ids.push(question.id.clone());
+                questionnaire_list.push(question);
+            }
+        }
+
+        // 3. Dynamic LLM augmentation layer (0-2 questions, capped at 7 total questions)
+        let mut augmented_ids = Vec::new();
+        if strictness != Strictness::Trust && self.augmenter.is_some() {
+            let max_additional_questions = 7_usize.saturating_sub(questionnaire_list.len());
+            if max_additional_questions > 0 {
+                let augmenter_instance = QuestionAugmenter::new(self.augmenter.clone());
+                let augmented_questions = augmenter_instance
+                    .augment(
+                        trimmed_description,
+                        task_class,
+                        &existing_question_ids,
+                        max_additional_questions,
+                    )
+                    .await;
+
+                for question in augmented_questions {
+                    if seen_ids.insert(question.id.clone()) {
+                        augmented_ids.push(question.id.clone());
+                        questionnaire_list.push(question);
+                    }
+                }
+            }
+        }
 
         tracing::debug!(
             task_class = ?task_class,
             strictness = ?strictness,
-            question_count = questionnaire.len(),
-            "questionnaire selected"
+            question_count = questionnaire_list.len(),
+            "questionnaire selected with dynamic augmentation"
         );
 
-        let collected_answers = Self::collect_answers(&questionnaire, ui)?;
+        let collected_answers = Self::collect_answers(&questionnaire_list, ui)?;
 
         let source_truth = SourceTruth {
             task_id: TaskId::new(),
@@ -111,6 +167,7 @@ impl Interrogator {
             description: trimmed_description.to_owned(),
             created_at: Utc::now(),
             answers: collected_answers,
+            augmented_question_ids: augmented_ids,
         };
 
         SourceTruth::store(&self.project_root, &source_truth)?;
@@ -131,7 +188,11 @@ impl Interrogator {
         let mut collected_answers: BTreeMap<String, String> = BTreeMap::new();
 
         for question in questionnaire {
-            let raw_answer = ui.prompt(question)?;
+            let mut formatted_question = question.clone();
+            if question.augmented {
+                formatted_question.text = format!("[?] {}", question.text);
+            }
+            let raw_answer = ui.prompt(&formatted_question)?;
             let trimmed_answer = raw_answer.trim().to_owned();
 
             if question.required && trimmed_answer.is_empty() {
@@ -184,23 +245,25 @@ mod tests {
         ProjectRoot::new(temp_path).unwrap()
     }
 
-    #[test]
-    fn ask_returns_error_for_empty_description() {
+    #[tokio::test]
+    async fn ask_returns_error_for_empty_description() {
         let project_root = temp_project_root();
         let interrogator = Interrogator::new(project_root);
         let mock_ui = MockUi::new([]);
         assert!(matches!(
-            interrogator.ask("   ", &mock_ui),
+            interrogator.ask("   ", &mock_ui).await,
             Err(StvpError::EmptyDescription)
         ));
     }
 
-    #[test]
-    fn ask_returns_error_when_required_answer_is_blank() {
+    #[tokio::test]
+    async fn ask_returns_error_when_required_answer_is_blank() {
         let project_root = temp_project_root();
         let interrogator = Interrogator::new(project_root);
         let mock_ui = MockUi::new([("primary_files", "")]);
-        let result = interrogator.ask("add JWT rotation to auth service", &mock_ui);
+        let result = interrogator
+            .ask("add JWT rotation to auth service", &mock_ui)
+            .await;
         assert!(
             matches!(result, Err(StvpError::MissingRequiredAnswer { ref question_id }) if question_id == "primary_files"),
             "expected MissingRequiredAnswer for primary_files, got: {result:?}"
@@ -228,8 +291,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ask_classifies_description_correctly() {
+    #[tokio::test]
+    async fn ask_classifies_description_correctly() {
         let project_root = temp_project_root();
         let interrogator = Interrogator::new(project_root);
         let mock_ui = MockUi::new([
@@ -240,6 +303,7 @@ mod tests {
         ]);
         let source_truth = interrogator
             .ask("implement JWT rotation", &mock_ui)
+            .await
             .expect("interrogation succeeds");
         assert_eq!(source_truth.task_class, TaskClass::NewFeature);
         assert_eq!(source_truth.strictness, Strictness::Strict);

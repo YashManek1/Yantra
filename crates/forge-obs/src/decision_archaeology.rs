@@ -16,13 +16,15 @@
 //! - `forge-core::truth` — provides optional truth-token grounding
 
 use std::collections::VecDeque;
-use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use yantra_core::{AgentKind, DecisionId, SessionId, TruthToken};
+use yantra_core::{hex_encode, AgentKind, DecisionId, SessionId, TruthToken};
 
+use crate::db_util::{
+    deserialize_optional_rusqlite, parse_rusqlite, parse_timestamp_rusqlite, to_rusqlite_error,
+};
 use crate::error::ObsResult;
 
 /// `SQLite` schema for decision archaeology.
@@ -40,6 +42,21 @@ pub const DECISIONS_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS decisions (
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_parent ON decisions(parent_decision_id);";
+
+/// Applies the decisions schema DDL to the given connection.
+///
+/// Uses `CREATE TABLE IF NOT EXISTS` so it is safe to call on an already-
+/// initialized database. Callers should invoke this once during connection
+/// setup rather than on every insert.
+///
+/// # Errors
+///
+/// Returns `ObsError` when schema DDL execution fails.
+pub fn ensure_decisions_schema(database: &Connection) -> ObsResult<()> {
+    database
+        .execute_batch(DECISIONS_SCHEMA_SQL)
+        .map_err(Into::into)
+}
 
 /// Durable record of an agent or orchestrator decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +89,7 @@ pub struct DecisionRecord {
 ///
 /// Returns `ObsError` when schema setup, serialization, or insertion fails.
 pub fn record_decision(database: &Connection, decision: &DecisionRecord) -> ObsResult<()> {
-    database.execute_batch(DECISIONS_SCHEMA_SQL)?;
+    ensure_decisions_schema(database)?;
     database.execute(
         "INSERT OR REPLACE INTO decisions (
             id,
@@ -116,7 +133,7 @@ pub fn causal_chain(
     database: &Connection,
     decision_id: DecisionId,
 ) -> ObsResult<Vec<DecisionRecord>> {
-    database.execute_batch(DECISIONS_SCHEMA_SQL)?;
+    ensure_decisions_schema(database)?;
     let mut chain = Vec::new();
     let mut current_decision_id = Some(decision_id);
 
@@ -138,18 +155,18 @@ pub fn descendants(
     database: &Connection,
     decision_id: DecisionId,
 ) -> ObsResult<Vec<DecisionRecord>> {
-    database.execute_batch(DECISIONS_SCHEMA_SQL)?;
-    let mut descendants = Vec::new();
+    ensure_decisions_schema(database)?;
+    let mut all_descendants = Vec::new();
     let mut pending_decision_ids = VecDeque::from([decision_id]);
 
     while let Some(parent_decision_id) = pending_decision_ids.pop_front() {
         for child_decision in query_children(database, parent_decision_id)? {
             pending_decision_ids.push_back(child_decision.id);
-            descendants.push(child_decision);
+            all_descendants.push(child_decision);
         }
     }
 
-    Ok(descendants)
+    Ok(all_descendants)
 }
 
 fn query_decision(database: &Connection, decision_id: DecisionId) -> ObsResult<DecisionRecord> {
@@ -190,9 +207,7 @@ fn row_to_decision(row: &rusqlite::Row<'_>) -> rusqlite::Result<DecisionRecord> 
 
     Ok(DecisionRecord {
         id: parse_rusqlite(&id_text)?,
-        timestamp: DateTime::parse_from_rfc3339(&timestamp_text)
-            .map(DateTime::<Utc>::from)
-            .map_err(to_rusqlite_error)?,
+        timestamp: parse_timestamp_rusqlite(&timestamp_text)?,
         session_id: parse_rusqlite(&session_id_text)?,
         parent_decision_id: parent_decision_id_text
             .as_deref()
@@ -200,39 +215,10 @@ fn row_to_decision(row: &rusqlite::Row<'_>) -> rusqlite::Result<DecisionRecord> 
             .transpose()?,
         action_type: row.get(4)?,
         reasoning: row.get(5)?,
-        alternatives_considered: alternatives_json
-            .map(|serialized_value| {
-                serde_json::from_str(&serialized_value).map_err(to_rusqlite_error)
-            })
-            .transpose()?
+        alternatives_considered: deserialize_optional_rusqlite(alternatives_json)?
             .unwrap_or_default(),
         truth_token: None,
         git_hash: row.get(7)?,
         agent: serde_json::from_str(&agent_json).map_err(to_rusqlite_error)?,
     })
-}
-
-fn parse_rusqlite<T>(value: &str) -> rusqlite::Result<T>
-where
-    T: FromStr,
-    T::Err: std::error::Error + Send + Sync + 'static,
-{
-    value.parse().map_err(to_rusqlite_error)
-}
-
-fn to_rusqlite_error<E>(error: E) -> rusqlite::Error
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(HEX_DIGITS[usize::from(byte >> 4)] as char);
-        encoded.push(HEX_DIGITS[usize::from(byte & 0x0f)] as char);
-    }
-    encoded
 }

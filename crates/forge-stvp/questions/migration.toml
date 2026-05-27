@@ -1,0 +1,34 @@
+[[questions]]
+id = "source_system"
+text = "What is being migrated FROM? (library name, version, or schema version)"
+answer_kind = "text"
+required = true
+help_text = "Be precise. E.g. 'rusqlite 0.29 to 0.31'."
+
+[[questions]]
+id = "target_system"
+text = "What is being migrated TO?"
+answer_kind = "text"
+required = true
+help_text = "Include target version or schema."
+
+[[questions]]
+id = "affected_files"
+text = "Which files will this migration touch?"
+answer_kind = "text"
+required = true
+help_text = "Comma-separated list."
+
+[[questions]]
+id = "rollback_plan"
+text = "What is the rollback plan if the migration fails?"
+answer_kind = "text"
+required = true
+help_text = "E.g. 'revert Cargo.toml change and re-lock', 'restore from backup'."
+
+[[questions]]
+id = "success_criteria"
+text = "How will you verify the migration succeeded?"
+answer_kind = "text"
+required = true
+help_text = "All existing tests must pass. List any additional checks."

@@ -1,0 +1,13 @@
+[[questions]]
+id = "what_chore"
+text = "What chore is being done?"
+answer_kind = "text"
+required = true
+help_text = "E.g. 'bump serde to 1.0.197', 'update CI workflow to actions/checkout@v4'."
+
+[[questions]]
+id = "success_criteria"
+text = "How will you verify the chore is complete and nothing is broken?"
+answer_kind = "text"
+required = true
+help_text = "E.g. 'cargo build passes, all tests pass'."

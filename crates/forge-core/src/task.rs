@@ -44,6 +44,23 @@ pub enum TaskClass {
     Style,
 }
 
+impl TaskClass {
+    /// Returns the stable lowercase string representation of the task class.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NewFeature => "new_feature",
+            Self::BugFix => "bug_fix",
+            Self::Refactor => "refactor",
+            Self::Migration => "migration",
+            Self::Integration => "integration",
+            Self::Exploration => "exploration",
+            Self::Chore => "chore",
+            Self::Docstring => "docstring",
+            Self::Style => "style",
+        }
+    }
+}
+
 /// Lifecycle state of a task node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TaskStatus {
@@ -80,4 +97,25 @@ pub struct TaskNode {
     pub truth_token: Option<TruthToken>,
     /// Decision that produced this task node.
     pub parent_decision_id: Option<DecisionId>,
+}
+
+/// A generated question definition representing (id, text, required, suggested_answer, help_text).
+pub type AugmentedQuestionTuple = (String, String, bool, Option<String>, Option<String>);
+
+/// Future type returned by LLM question augmentation.
+pub type AugmentFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Vec<AugmentedQuestionTuple>> + Send>>;
+
+/// Port/trait used to dynamically generate questionnaire questions via LLM.
+/// Implemented by downstream crates (e.g. `yantra-cli` using `Router`) and
+/// injected into `STVP` interrogator.
+pub trait AugmenterPort: Send + Sync {
+    /// Generates context-specific questions for a task using an LLM.
+    fn augment(
+        &self,
+        task_description: &str,
+        task_class: TaskClass,
+        existing_question_ids: Vec<String>,
+        max_count: usize,
+    ) -> AugmentFuture;
 }

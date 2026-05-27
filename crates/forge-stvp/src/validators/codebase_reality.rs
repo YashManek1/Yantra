@@ -101,6 +101,7 @@ mod tests {
             description: "test task".to_owned(),
             created_at: Utc::now(),
             answers,
+            augmented_question_ids: Vec::new(),
         }
     }
 

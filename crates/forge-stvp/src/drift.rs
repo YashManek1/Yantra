@@ -93,7 +93,7 @@ impl ParsedDiff {
             .filter_map(|line| {
                 PATTERN_DIFF_FILE_HEADER
                     .captures(line)
-                    .map(|cap| cap[1].to_owned())
+                    .map(|diff_file_capture| diff_file_capture[1].to_owned())
             })
             .collect()
     }
@@ -179,6 +179,7 @@ mod tests {
                 .iter()
                 .map(|&(key, value)| (key.to_string(), value.to_string()))
                 .collect::<BTreeMap<_, _>>(),
+            augmented_question_ids: Vec::new(),
         }
     }
 

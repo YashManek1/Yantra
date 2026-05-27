@@ -72,4 +72,11 @@ pub enum AstError {
     /// Core type parsing failed.
     #[error("core error: {0}")]
     Core(#[from] yantra_core::CoreError),
+
+    /// A database row contained data that could not be deserialized.
+    #[error("corrupt database row: {detail}")]
+    CorruptDatabase {
+        /// Human-readable detail describing the corruption.
+        detail: String,
+    },
 }

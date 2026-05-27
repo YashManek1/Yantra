@@ -133,6 +133,7 @@ mod tests {
                 .iter()
                 .map(|&(k, v)| (k.to_string(), v.to_string()))
                 .collect::<BTreeMap<_, _>>(),
+            augmented_question_ids: Vec::new(),
         }
     }
 

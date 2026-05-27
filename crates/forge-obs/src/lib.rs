@@ -19,6 +19,7 @@
 
 pub mod anomaly;
 pub mod cost;
+pub(crate) mod db_util;
 pub mod decision_archaeology;
 pub mod error;
 pub mod traces;

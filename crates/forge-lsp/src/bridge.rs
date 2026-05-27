@@ -24,9 +24,22 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use crate::client::{extract_location, LspClient};
+use crate::client::{extract_location, extract_range, LspClient};
 use crate::error::{LspError, LspResult};
 use crate::types::{Diagnostic, DiagnosticSeverity, HoverInfo, Language, Location, TextEdit};
+
+pub(crate) const LSP_METHOD_DEFINITION: &str = "textDocument/definition";
+pub(crate) const LSP_METHOD_REFERENCES: &str = "textDocument/references";
+pub(crate) const LSP_METHOD_HOVER: &str = "textDocument/hover";
+pub(crate) const LSP_METHOD_RENAME: &str = "textDocument/rename";
+pub(crate) const LSP_METHOD_DIAGNOSTIC: &str = "textDocument/diagnostic";
+pub(crate) const LSP_METHOD_DID_OPEN: &str = "textDocument/didOpen";
+pub(crate) const LSP_METHOD_INITIALIZE: &str = "initialize";
+pub(crate) const LSP_METHOD_INITIALIZED: &str = "initialized";
+
+const LSP_SEVERITY_ERROR: u64 = 1;
+const LSP_SEVERITY_WARNING: u64 = 2;
+const LSP_SEVERITY_INFORMATION: u64 = 3;
 
 /// Per-language configuration for spawning an LSP server.
 #[derive(Debug, Clone)]
@@ -38,7 +51,7 @@ pub struct LspServerConfig {
 }
 
 impl LspServerConfig {
-    /// Creates a config using the default binary name for the given language.
+    /// Creates a config using the default binary name and arguments for the given language.
     pub fn default_for(language: &Language) -> Self {
         Self {
             binary: language.default_server_binary().to_owned(),
@@ -48,6 +61,9 @@ impl LspServerConfig {
 }
 
 /// Routes LSP queries to per-language server processes.
+///
+/// Spawns one `LspClient` per language on first use and reuses it for all
+/// subsequent queries. Thread-safe via `Arc<Mutex<...>>` on the client map.
 pub struct LspBridge {
     workspace_root: PathBuf,
     server_configs: HashMap<Language, LspServerConfig>,
@@ -98,9 +114,10 @@ impl LspBridge {
     /// Returns `LspError::SpawnFailed` if the server binary is not on PATH.
     pub async fn get_definition(&self, file: &str, line: u32, column: u32) -> LspResult<Location> {
         let language = language_for_file(file)?;
+        self.open_document(file, language.lsp_language_id()).await?;
         let client = self.get_or_spawn(&language).await?;
         let params = text_document_position(file, line, column);
-        let response = client.request("textDocument/definition", params).await?;
+        let response = client.request(LSP_METHOD_DEFINITION, params).await?;
 
         let location_value = if response.is_array() {
             response
@@ -127,17 +144,16 @@ impl LspBridge {
         column: u32,
     ) -> LspResult<Vec<Location>> {
         let language = language_for_file(file)?;
+        self.open_document(file, language.lsp_language_id()).await?;
         let client = self.get_or_spawn(&language).await?;
         let mut params = text_document_position(file, line, column);
         params["context"] = json!({ "includeDeclaration": true });
-        let response = client.request("textDocument/references", params).await?;
+        let response = client.request(LSP_METHOD_REFERENCES, params).await?;
 
         let locations: Vec<Location> = response
             .as_array()
-            .unwrap_or(&vec![])
-            .iter()
-            .map(extract_location)
-            .collect();
+            .map(|array| array.iter().map(extract_location).collect())
+            .unwrap_or_default();
         Ok(locations)
     }
 
@@ -148,12 +164,13 @@ impl LspBridge {
     /// Returns `LspError::UnsupportedLanguage` or `LspError::SpawnFailed`.
     pub async fn get_diagnostics(&self, file: &str) -> LspResult<Vec<Diagnostic>> {
         let language = language_for_file(file)?;
+        self.open_document(file, language.lsp_language_id()).await?;
         let client = self.get_or_spawn(&language).await?;
         let file_uri = path_to_lsp_uri(file);
 
         let response = client
             .request(
-                "textDocument/diagnostic",
+                LSP_METHOD_DIAGNOSTIC,
                 json!({ "textDocument": { "uri": file_uri } }),
             )
             .await;
@@ -183,28 +200,33 @@ impl LspBridge {
     /// Returns `LspError::UnsupportedLanguage` or `LspError::SpawnFailed`.
     pub async fn get_hover(&self, file: &str, line: u32, column: u32) -> LspResult<HoverInfo> {
         let language = language_for_file(file)?;
+        self.open_document(file, language.lsp_language_id()).await?;
         let client = self.get_or_spawn(&language).await?;
         let params = text_document_position(file, line, column);
-        let response = client.request("textDocument/hover", params).await?;
+        let response = client.request(LSP_METHOD_HOVER, params).await?;
 
         let contents_text = match &response["contents"] {
             serde_json::Value::String(text_value) => text_value.clone(),
             object_value if object_value.is_object() => {
                 object_value["value"].as_str().unwrap_or("").to_owned()
             }
-            array_value if array_value.is_array() => array_value
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(|element| {
-                    if element.is_string() {
-                        element.as_str().map(str::to_owned)
-                    } else {
-                        element["value"].as_str().map(str::to_owned)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
+            array_value if array_value.is_array() => {
+                if let Some(elements) = array_value.as_array() {
+                    elements
+                        .iter()
+                        .filter_map(|element| {
+                            if element.is_string() {
+                                element.as_str().map(str::to_owned)
+                            } else {
+                                element["value"].as_str().map(str::to_owned)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    String::new()
+                }
+            }
             _ => String::new(),
         };
 
@@ -236,6 +258,7 @@ impl LspBridge {
         new_name: &str,
     ) -> LspResult<Vec<TextEdit>> {
         let language = language_for_file(file)?;
+        self.open_document(file, language.lsp_language_id()).await?;
         let client = self.get_or_spawn(&language).await?;
         let file_uri = path_to_lsp_uri(file);
 
@@ -245,31 +268,61 @@ impl LspBridge {
             "newName": new_name
         });
 
-        let response = client.request("textDocument/rename", params).await?;
+        let response = client.request(LSP_METHOD_RENAME, params).await?;
 
         let mut text_edits: Vec<TextEdit> = Vec::new();
         if let Some(changes_map) = response["changes"].as_object() {
-            for (file_uri, edits_array) in changes_map {
-                let edit_file = file_uri
+            for (uri_key, edits_array) in changes_map {
+                let edit_file = uri_key
                     .strip_prefix("file:///")
-                    .or_else(|| file_uri.strip_prefix("file://"))
-                    .unwrap_or(file_uri);
-                for edit in edits_array.as_array().unwrap_or(&vec![]) {
-                    let (start_line, start_column, end_line, end_column) =
-                        crate::client::extract_range(&edit["range"]);
-                    text_edits.push(TextEdit {
-                        file: edit_file.to_owned(),
-                        start_line,
-                        start_column,
-                        end_line,
-                        end_column,
-                        new_text: edit["newText"].as_str().unwrap_or(new_name).to_owned(),
-                    });
+                    .or_else(|| uri_key.strip_prefix("file://"))
+                    .unwrap_or(uri_key);
+                if let Some(edit_items) = edits_array.as_array() {
+                    for edit in edit_items {
+                        let (start_line, start_column, end_line, end_column) =
+                            extract_range(&edit["range"]);
+                        text_edits.push(TextEdit {
+                            file: edit_file.to_owned(),
+                            start_line,
+                            start_column,
+                            end_line,
+                            end_column,
+                            new_text: edit["newText"].as_str().unwrap_or(new_name).to_owned(),
+                        });
+                    }
                 }
             }
         }
 
         Ok(text_edits)
+    }
+
+    /// Sends a `textDocument/didOpen` notification before any query.
+    ///
+    /// Required by the LSP protocol: servers will not respond to definition,
+    /// references, hover, rename, or diagnostic requests until the document
+    /// has been opened. Reads the file content from disk synchronously.
+    async fn open_document(&self, file_path: &str, language_id: &str) -> LspResult<()> {
+        let file_uri = path_to_lsp_uri(file_path);
+        let file_content = tokio::fs::read_to_string(file_path)
+            .await
+            .map_err(|io_error| LspError::Framing(io_error.to_string()))?;
+
+        let language = language_for_file(file_path)?;
+        let client = self.get_or_spawn(&language).await?;
+        client
+            .notify(
+                LSP_METHOD_DID_OPEN,
+                json!({
+                    "textDocument": {
+                        "uri": file_uri,
+                        "languageId": language_id,
+                        "version": 1,
+                        "text": file_content
+                    }
+                }),
+            )
+            .await
     }
 
     async fn get_or_spawn(&self, language: &Language) -> LspResult<Arc<LspClient>> {
@@ -291,10 +344,17 @@ impl LspBridge {
             .await?;
             client_map.insert(language.clone(), Arc::new(new_client));
         }
-        Ok(Arc::clone(client_map.get(language).unwrap()))
+        Ok(Arc::clone(
+            client_map
+                .get(language)
+                .expect("key was just inserted into the client map"),
+        ))
     }
 }
 
+/// Determines the LSP language from a file path's extension.
+///
+/// Returns `LspError::UnsupportedLanguage` for unknown extensions.
 fn language_for_file(file: &str) -> LspResult<Language> {
     let extension = Path::new(file)
         .extension()
@@ -305,6 +365,9 @@ fn language_for_file(file: &str) -> LspResult<Language> {
     })
 }
 
+/// Builds an LSP `textDocument/position` parameter JSON value.
+///
+/// The URI is derived from `file` using `path_to_lsp_uri`.
 fn text_document_position(file: &str, line: u32, column: u32) -> serde_json::Value {
     json!({
         "textDocument": { "uri": path_to_lsp_uri(file) },
@@ -312,7 +375,12 @@ fn text_document_position(file: &str, line: u32, column: u32) -> serde_json::Val
     })
 }
 
-fn path_to_lsp_uri(file: &str) -> String {
+/// Converts a file path or existing `file://` URI to an LSP-compatible URI.
+///
+/// Already-valid `file://` URIs are returned unchanged. Unix absolute paths
+/// are prefixed with `file://`. Windows paths have backslashes normalized
+/// and receive a `file:///` prefix.
+pub(crate) fn path_to_lsp_uri(file: &str) -> String {
     if file.starts_with("file://") {
         file.to_owned()
     } else if file.starts_with('/') {
@@ -323,15 +391,20 @@ fn path_to_lsp_uri(file: &str) -> String {
     }
 }
 
+/// Parses one LSP diagnostic JSON object into a typed `Diagnostic`.
+///
+/// Falls back to `DiagnosticSeverity::Hint` for unknown severity codes.
+/// The `file` argument is used as the `Location::file` field.
 fn parse_diagnostic(item: &serde_json::Value, file: &str) -> Diagnostic {
-    let severity = match item["severity"].as_u64().unwrap_or(1) {
-        1 => DiagnosticSeverity::Error,
-        2 => DiagnosticSeverity::Warning,
-        3 => DiagnosticSeverity::Information,
+    let severity = match item["severity"].as_u64().unwrap_or(LSP_SEVERITY_ERROR) {
+        severity_code if severity_code == LSP_SEVERITY_ERROR => DiagnosticSeverity::Error,
+        severity_code if severity_code == LSP_SEVERITY_WARNING => DiagnosticSeverity::Warning,
+        severity_code if severity_code == LSP_SEVERITY_INFORMATION => {
+            DiagnosticSeverity::Information
+        }
         _ => DiagnosticSeverity::Hint,
     };
-    let (start_line, start_column, end_line, end_column) =
-        crate::client::extract_range(&item["range"]);
+    let (start_line, start_column, end_line, end_column) = extract_range(&item["range"]);
     Diagnostic {
         severity,
         message: item["message"].as_str().unwrap_or("").to_owned(),
@@ -346,6 +419,7 @@ fn parse_diagnostic(item: &serde_json::Value, file: &str) -> Diagnostic {
     }
 }
 
+/// Returns the default command-line arguments for a given language server.
 fn default_args_for(language: &Language) -> Vec<String> {
     match language {
         Language::Rust => vec![],
@@ -412,5 +486,19 @@ mod tests {
         assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
         assert_eq!(diagnostic.message, "mismatched types");
         assert_eq!(diagnostic.location.start_line, 5);
+    }
+
+    #[test]
+    fn test_parse_diagnostic_warning_severity() {
+        let item = json!({
+            "severity": 2,
+            "message": "unused variable",
+            "range": {
+                "start": { "line": 3, "character": 0 },
+                "end":   { "line": 3, "character": 5 }
+            }
+        });
+        let diagnostic = parse_diagnostic(&item, "src/main.rs");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
     }
 }

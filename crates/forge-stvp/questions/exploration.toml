@@ -1,0 +1,20 @@
+[[questions]]
+id = "what_to_explore"
+text = "What question are you trying to answer or hypothesis to test?"
+answer_kind = "text"
+required = true
+help_text = "Be specific. Exploration without a question is not actionable."
+
+[[questions]]
+id = "scope"
+text = "Which part of the codebase or system will you explore?"
+answer_kind = "text"
+required = true
+help_text = "Name files, modules, or subsystems."
+
+[[questions]]
+id = "success_criteria"
+text = "What deliverable will this exploration produce?"
+answer_kind = "text"
+required = true
+help_text = "E.g. 'an ADR in docs/decisions/', 'a spike branch with proof-of-concept'."

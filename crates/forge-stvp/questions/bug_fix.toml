@@ -1,0 +1,27 @@
+[[questions]]
+id = "what_is_broken"
+text = "What is broken? Describe the symptom in one sentence."
+answer_kind = "text"
+required = true
+help_text = "Describe what the system does wrong, not what it should do."
+
+[[questions]]
+id = "reproduction_steps"
+text = "How do you reproduce the bug? List the exact steps."
+answer_kind = "text"
+required = true
+help_text = "Minimum reproduction is ideal."
+
+[[questions]]
+id = "affected_files"
+text = "Which files are most likely to contain the bug?"
+answer_kind = "text"
+required = true
+help_text = "Comma-separated file paths or module names."
+
+[[questions]]
+id = "success_criteria"
+text = "What is the correct behaviour? How will you verify the fix?"
+answer_kind = "text"
+required = true
+help_text = "Must be testable. E.g. 'error no longer occurs when X calls Y with Z input'."

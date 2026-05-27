@@ -21,9 +21,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
 
-/// Path-specific error alias used by path safety helpers.
-pub type PathError = CoreError;
-
 /// Canonical project root path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProjectRoot(PathBuf);
@@ -52,9 +49,9 @@ impl ProjectRoot {
 ///
 /// # Errors
 ///
-/// Returns `PathError::PathEscapesRoot` when the normalized path is outside
+/// Returns `CoreError::PathEscapesRoot` when the normalized path is outside
 /// the project root.
-pub fn canonicalize_within(root: &ProjectRoot, path: &Path) -> Result<PathBuf, PathError> {
+pub fn canonicalize_within(root: &ProjectRoot, path: &Path) -> Result<PathBuf, CoreError> {
     let joined_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -72,36 +69,55 @@ pub fn canonicalize_within(root: &ProjectRoot, path: &Path) -> Result<PathBuf, P
     }
 }
 
-/// Checks whether a path matches `.yantra/sacred.txt` patterns.
+/// Loads and parses sacred-file glob patterns from `.yantra/sacred.txt`.
+///
+/// Returns an empty list when the file does not exist. Callers in hot paths
+/// should cache the returned `Vec` themselves rather than invoking this on
+/// every path check.
 ///
 /// # Errors
 ///
-/// Returns `PathError` when the requested path escapes the root or when the
-/// sacred pattern file cannot be read.
-pub fn is_sacred(root: &ProjectRoot, path: &Path) -> Result<bool, PathError> {
-    let canonical_path = canonicalize_within(root, path)?;
-    let sacred_patterns_path = root.as_path().join(".yantra").join("sacred.txt");
-
+/// Returns `CoreError::PathIo` when the sacred pattern file exists but cannot
+/// be read.
+pub fn load_sacred_patterns(yantra_dir: &Path) -> Result<Vec<String>, CoreError> {
+    let sacred_patterns_path = yantra_dir.join("sacred.txt");
     if !sacred_patterns_path.exists() {
-        return Ok(false);
+        return Ok(Vec::new());
     }
-
-    let sacred_patterns =
+    let file_contents =
         std::fs::read_to_string(&sacred_patterns_path).map_err(|source| CoreError::PathIo {
-            path: sacred_patterns_path.clone(),
+            path: sacred_patterns_path,
             source,
         })?;
+    let parsed_patterns = file_contents
+        .lines()
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty() && !pattern.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    Ok(parsed_patterns)
+}
+
+/// Checks whether a path matches `.yantra/sacred.txt` patterns.
+///
+/// Reads the pattern file on every call. Callers in hot paths should use
+/// `load_sacred_patterns` once and cache the result.
+///
+/// # Errors
+///
+/// Returns `CoreError` when the requested path escapes the root or when the
+/// sacred pattern file cannot be read.
+pub fn is_sacred(root: &ProjectRoot, path: &Path) -> Result<bool, CoreError> {
+    let canonical_path = canonicalize_within(root, path)?;
+    let yantra_dir = root.as_path().join(".yantra");
+    let patterns = load_sacred_patterns(&yantra_dir)?;
     let relative_path = canonical_path
         .strip_prefix(root.as_path())
         .unwrap_or(canonical_path.as_path())
         .to_string_lossy()
         .replace('\\', "/");
-
-    Ok(sacred_patterns
-        .lines()
-        .map(str::trim)
-        .filter(|pattern| !pattern.is_empty())
-        .filter(|pattern| !pattern.starts_with('#'))
+    Ok(patterns
+        .iter()
         .any(|pattern| sacred_pattern_matches(pattern, &relative_path)))
 }
 
@@ -167,5 +183,35 @@ mod tests {
         assert!(is_sacred(&project_root, Path::new("configs/routing.toml")).unwrap());
         assert!(is_sacred(&project_root, Path::new("crates/forge-core/Cargo.toml")).unwrap());
         assert!(!is_sacred(&project_root, Path::new("README.md")).unwrap());
+    }
+
+    #[test]
+    fn is_sacred_returns_false_when_no_sacred_file_exists() {
+        let root_path = std::env::temp_dir().join(format!("yantra-core-{}", TaskId::new()));
+        fs::create_dir_all(root_path.join(".yantra")).unwrap();
+        let project_root = ProjectRoot::new(&root_path).unwrap();
+
+        assert!(!is_sacred(&project_root, Path::new("README.md")).unwrap());
+    }
+
+    #[test]
+    fn is_sacred_matches_direct_pattern() {
+        let root_path = std::env::temp_dir().join(format!("yantra-core-{}", TaskId::new()));
+        let sacred_directory = root_path.join(".yantra");
+        fs::create_dir_all(&sacred_directory).unwrap();
+        fs::write(
+            sacred_directory.join("sacred.txt"),
+            "src/auth/**\nREADME.md\n",
+        )
+        .unwrap();
+        let project_root = ProjectRoot::new(&root_path).unwrap();
+
+        fs::create_dir_all(root_path.join("src/auth")).unwrap();
+        fs::write(root_path.join("README.md"), "").unwrap();
+        fs::write(root_path.join("src/auth/token.rs"), "").unwrap();
+
+        assert!(is_sacred(&project_root, Path::new("README.md")).unwrap());
+        assert!(is_sacred(&project_root, Path::new("src/auth/token.rs")).unwrap());
+        assert!(!is_sacred(&project_root, Path::new("CHANGELOG.md")).unwrap());
     }
 }

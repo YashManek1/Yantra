@@ -52,8 +52,10 @@ impl Drop for HeartbeatHandle {
 
 /// Spawns the heartbeat background task and returns a handle for graceful shutdown.
 ///
-/// The task runs `heartbeat_tick` every `interval`. It automatically stops
-/// when `HeartbeatHandle::stop()` is called or the handle is dropped.
+/// The task runs `run_heartbeat_tick` every `interval`. Synchronous SQLite I/O
+/// is offloaded to `tokio::task::spawn_blocking` to avoid blocking the async
+/// runtime. The task stops when `HeartbeatHandle::stop()` is called or the
+/// handle is dropped.
 pub fn start_heartbeat(recall_store: Arc<RecallStore>, interval: Duration) -> HeartbeatHandle {
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
@@ -62,9 +64,13 @@ pub fn start_heartbeat(recall_store: Arc<RecallStore>, interval: Duration) -> He
         timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
+            // Cancel safety: the timer.tick() branch is cancel-safe (tokio::time::Interval is cancel-safe).
+            // The shutdown_rx branch is cancel-safe (oneshot receiver is cancel-safe).
+            // The spawn_blocking call in run_heartbeat_tick is wrapped in a JoinHandle and
+            // is cancel-safe to drop (the blocking thread will complete independently).
             tokio::select! {
                 _ = timer.tick() => {
-                    heartbeat_tick(&recall_store);
+                    run_heartbeat_tick(Arc::clone(&recall_store)).await;
                 }
                 _ = &mut shutdown_rx => {
                     tracing::debug!("heartbeat received shutdown signal");
@@ -79,14 +85,21 @@ pub fn start_heartbeat(recall_store: Arc<RecallStore>, interval: Duration) -> He
     }
 }
 
+async fn run_heartbeat_tick(recall_store: Arc<RecallStore>) {
+    let join_result = tokio::task::spawn_blocking(move || {
+        heartbeat_tick(&recall_store);
+    })
+    .await;
+
+    if let Err(join_error) = join_result {
+        tracing::error!("heartbeat tick panicked: {}", join_error);
+    }
+}
+
 fn heartbeat_tick(recall_store: &RecallStore) {
     if let Err(memory_error) = summarize_completed_sessions(recall_store) {
         tracing::warn!(?memory_error, "heartbeat: session summarization failed");
     }
-
-    tracing::debug!("heartbeat tick: re-index stub (Wave 2)");
-    tracing::debug!("heartbeat tick: tool liveness check stub (Wave 2)");
-    tracing::debug!("heartbeat tick: KV-cache warm-up stub (Day 4)");
 }
 
 #[cfg(test)]
@@ -144,9 +157,16 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(60)).await;
         handle.stop();
 
-        let summary = recall_store
-            .get_session_summary(&session_id)
-            .expect("query succeeds");
+        let mut summary = None;
+        for _ in 0..10 {
+            summary = recall_store
+                .get_session_summary(&session_id)
+                .expect("query succeeds");
+            if summary.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(15)).await;
+        }
         assert!(summary.is_some(), "heartbeat should have created a summary");
     }
 }

@@ -4863,6 +4863,8 @@ name = "yantra-agents"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
+ "regex",
  "ring",
  "rusqlite",
  "serde",
@@ -5176,7 +5178,14 @@ dependencies = [
 name = "yantra-verifier"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "proptest",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
  "yantra-core",
  "yantra-crg",

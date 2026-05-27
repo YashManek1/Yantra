@@ -62,6 +62,10 @@ pub struct SourceTruth {
     /// `BTreeMap` guarantees stable YAML key order, which is required for
     /// deterministic content-hash computation.
     pub answers: BTreeMap<String, String>,
+    /// Stable identifier list of augmented questions whose answers are saved
+    /// but whose IDs are not signed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub augmented_question_ids: Vec<String>,
 }
 
 impl SourceTruth {
@@ -170,9 +174,22 @@ fn store_hash(
 
     apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
 
+    let task_id_string = task_id.to_string();
+    let existing_hash: Option<String> = database_guard
+        .query_row(
+            "SELECT content_hash FROM truth_hashes WHERE task_id = ?1",
+            rusqlite::params![task_id_string],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    if existing_hash.is_some() {
+        return Err(StvpError::ImmutabilityViolation { task_id });
+    }
+
     database_guard.execute(
-        "INSERT OR REPLACE INTO truth_hashes (task_id, content_hash) VALUES (?1, ?2)",
-        rusqlite::params![task_id.to_string(), content_hash],
+        "INSERT INTO truth_hashes (task_id, content_hash) VALUES (?1, ?2)",
+        rusqlite::params![task_id_string, content_hash],
     )?;
 
     Ok(())
@@ -241,6 +258,7 @@ mod tests {
             description: "add JWT rotation".to_owned(),
             created_at: Utc::now(),
             answers: collected_answers,
+            augmented_question_ids: Vec::new(),
         }
     }
 

@@ -1,0 +1,13 @@
+[[questions]]
+id = "what_to_document"
+text = "Which functions or types need documentation?"
+answer_kind = "text"
+required = true
+help_text = "Comma-separated list of fully-qualified names."
+
+[[questions]]
+id = "success_criteria"
+text = "How will you verify documentation is complete and accurate?"
+answer_kind = "text"
+required = true
+help_text = "E.g. 'cargo doc --no-deps produces no warnings'."

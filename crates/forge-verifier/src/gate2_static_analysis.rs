@@ -209,9 +209,9 @@ pub fn parse_cargo_json_output(json_lines: &str) -> Vec<Violation> {
             .get("spans")
             .and_then(|spans| spans.as_array())
             .and_then(|span_array| {
-                span_array
-                    .iter()
-                    .find(|span| span.get("is_primary").and_then(serde_json::Value::as_bool) == Some(true))
+                span_array.iter().find(|span| {
+                    span.get("is_primary").and_then(serde_json::Value::as_bool) == Some(true)
+                })
             });
 
         let file_path = primary_span

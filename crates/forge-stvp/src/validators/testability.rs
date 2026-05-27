@@ -24,6 +24,8 @@ use crate::source_truth::SourceTruth;
 use crate::validation::{ProjectContext, ValidationViolation, Validator, ViolationSeverity};
 
 static PATTERN_VAGUE_TERM: LazyLock<Regex> = LazyLock::new(|| {
+    // SAFETY: This regex pattern is validated at compile time. If it fails, the
+    // binary is fundamentally broken and cannot run correctly.
     Regex::new(
         r"(?i)\b(cleaner|better|more efficient|nicer|prettier|improved|good|great|faster|simpler|easier)\b",
     )
@@ -31,6 +33,8 @@ static PATTERN_VAGUE_TERM: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static PATTERN_TESTABLE_VERB: LazyLock<Regex> = LazyLock::new(|| {
+    // SAFETY: This regex pattern is validated at compile time. If it fails, the
+    // binary is fundamentally broken and cannot run correctly.
     Regex::new(
         r"(?i)\b(returns?|equals?|fails?|succeeds?|contains?|raises?|throws?|completes? in|passes?|matches?|outputs?|emits?|produces?|asserts?|verif(y|ies)|rejects?|accepts?)\b",
     )
@@ -95,6 +99,7 @@ mod tests {
             description: "test task".to_owned(),
             created_at: Utc::now(),
             answers,
+            augmented_question_ids: Vec::new(),
         }
     }
 

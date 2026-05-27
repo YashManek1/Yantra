@@ -38,8 +38,8 @@ fn temp_project_root() -> (ProjectRoot, std::path::PathBuf) {
     (project_root, temp_path)
 }
 
-#[test]
-fn full_flow_new_feature_strict_passes_validation_and_issues_token() {
+#[tokio::test]
+async fn full_flow_new_feature_strict_passes_validation_and_issues_token() {
     let (project_root, temp_path) = temp_project_root();
     let interrogator = Interrogator::new(project_root.clone());
 
@@ -59,6 +59,7 @@ fn full_flow_new_feature_strict_passes_validation_and_issues_token() {
 
     let source_truth = interrogator
         .ask("implement JWT rotation for the auth service", &mock_ui)
+        .await
         .expect("interrogation succeeds");
 
     assert_eq!(source_truth.task_class, TaskClass::NewFeature);
@@ -79,14 +80,15 @@ fn full_flow_new_feature_strict_passes_validation_and_issues_token() {
     assert_eq!(truth_token.strictness, Strictness::Strict);
 }
 
-#[test]
-fn trust_mode_task_skips_validators_and_issues_token() {
+#[tokio::test]
+async fn trust_mode_task_skips_validators_and_issues_token() {
     let (project_root, temp_path) = temp_project_root();
     let interrogator = Interrogator::new(project_root.clone());
 
     let mock_ui = MockUi::new([]);
     let source_truth = interrogator
         .ask("format all source files with rustfmt style rules", &mock_ui)
+        .await
         .expect("interrogation succeeds");
 
     assert_eq!(source_truth.strictness, Strictness::Trust);
@@ -106,8 +108,8 @@ fn trust_mode_task_skips_validators_and_issues_token() {
     assert_eq!(truth_token.strictness, Strictness::Trust);
 }
 
-#[test]
-fn drift_detector_catches_scope_violation_in_agent_diff() {
+#[tokio::test]
+async fn drift_detector_catches_scope_violation_in_agent_diff() {
     let (project_root, _temp_path) = temp_project_root();
     let interrogator = Interrogator::new(project_root);
 
@@ -123,6 +125,7 @@ fn drift_detector_catches_scope_violation_in_agent_diff() {
 
     let source_truth = interrogator
         .ask("fix null dereference in auth handler", &mock_ui)
+        .await
         .expect("interrogation succeeds");
 
     let diff =
@@ -160,6 +163,7 @@ fn drift_detector_catches_dep_manifest_change_when_disallowed() {
         ]
         .into_iter()
         .collect::<BTreeMap<_, _>>(),
+        augmented_question_ids: Vec::new(),
     };
 
     let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -10,3 +10,4 @@\n+serde = \"1.0\"\n";

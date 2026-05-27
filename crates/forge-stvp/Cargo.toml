@@ -10,8 +10,6 @@ publish             = false
 [dependencies]
 yantra-core.workspace   = true
 yantra-ast.workspace    = true
-yantra-crg.workspace    = true
-yantra-memory.workspace = true
 thiserror.workspace     = true
 tracing.workspace       = true
 serde.workspace         = true
@@ -21,6 +19,8 @@ chrono.workspace        = true
 ring.workspace          = true
 regex.workspace         = true
 rusqlite.workspace      = true
+toml                    = "0.8"
+tokio.workspace         = true
 
 [lints]
 workspace = true

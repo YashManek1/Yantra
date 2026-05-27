@@ -128,13 +128,6 @@ impl TaskClassifier {
 
         best_class
     }
-
-    /// Stub for a future model-assisted fallback when rule confidence is low.
-    ///
-    /// Not implemented for the hackathon; delegates to `classify`.
-    pub fn classify_with_model_fallback(description: &str) -> TaskClass {
-        Self::classify(description)
-    }
 }
 
 #[cfg(test)]
@@ -249,14 +242,6 @@ mod tests {
         assert_eq!(
             TaskClassifier::classify("MIGRATE data schema"),
             TaskClass::Migration
-        );
-    }
-
-    #[test]
-    fn model_fallback_stub_delegates_to_rule_classifier() {
-        assert_eq!(
-            TaskClassifier::classify_with_model_fallback("fix the crash"),
-            TaskClass::BugFix
         );
     }
 }

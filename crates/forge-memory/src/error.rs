@@ -63,6 +63,10 @@ pub enum MemoryError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// Stored data was structurally corrupt and could not be decoded.
+    #[error("corrupt data: {0}")]
+    CorruptData(String),
+
     /// A foundational core operation failed.
     #[error("core error: {0}")]
     Core(#[from] CoreError),

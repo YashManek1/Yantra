@@ -21,6 +21,7 @@
 pub mod builder;
 pub mod connectivity;
 pub mod embedding;
+pub mod error;
 pub mod render;
 pub mod schema;
 pub mod seed;
@@ -29,7 +30,8 @@ pub mod subgraph;
 pub use builder::GraphBuilder;
 pub use connectivity::compute_connectivity;
 pub use embedding::EmbeddingStore;
+pub use error::{CrgError, CrgResult};
 pub use render::{NodeProvenance, RenderedSubgraph, SubgraphManifest};
 pub use schema::{create_crg_schema, CRG_SCHEMA_SQL};
 pub use seed::{SeedExtractor, SeedSource};
-pub use subgraph::{extract_subgraph, GraphCache};
+pub use subgraph::{extract_subgraph, EdgeDetails, GraphCache, SymbolDetails};

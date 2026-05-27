@@ -1,0 +1,13 @@
+[[questions]]
+id = "what_to_fix"
+text = "What style issue is being fixed?"
+answer_kind = "text"
+required = true
+help_text = "E.g. 'cargo fmt violations in src/auth/', 'clippy::redundant_clone warnings'."
+
+[[questions]]
+id = "success_criteria"
+text = "How will you verify style compliance?"
+answer_kind = "text"
+required = true
+help_text = "E.g. 'cargo fmt --check passes', 'cargo clippy -- -D warnings passes'."
