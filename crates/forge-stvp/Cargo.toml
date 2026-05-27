@@ -19,7 +19,7 @@ chrono.workspace        = true
 ring.workspace          = true
 regex.workspace         = true
 rusqlite.workspace      = true
-toml                    = "0.8"
+toml                    = "1.1"
 tokio.workspace         = true
 
 [lints]
