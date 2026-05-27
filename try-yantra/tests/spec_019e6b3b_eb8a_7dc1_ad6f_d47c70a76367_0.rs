@@ -1,8 +1,8 @@
-// generated-from-stvp: 019e68bd-a453-7e21-b30d-c244ba415b26
+// generated-from-stvp: 019e6b3b-eb8a-7dc1-ad6f-d47c70a76367
 // criterion[0]: calling rotate_jwt() returns a new token and invalidates the old one
 
 #[cfg(test)]
-mod spec_019e68bd_a453_7e21_b30d_c244ba415b26_0 {
+mod spec_019e6b3b_eb8a_7dc1_ad6f_d47c70a76367_0 {
 
     proptest::proptest! {
     /// Verifies: calling rotate_jwt() returns a new token and invalidates the old one

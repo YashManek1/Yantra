@@ -166,9 +166,24 @@ impl Router {
                 ModelTier::Tier2,
                 ModelTier::Tier3,
             ],
-            ModelTier::Tier1 => vec![ModelTier::Tier1, ModelTier::Tier2, ModelTier::Tier3],
-            ModelTier::Tier2 => vec![ModelTier::Tier2, ModelTier::Tier3],
-            ModelTier::Tier3 => vec![ModelTier::Tier3],
+            ModelTier::Tier1 => vec![
+                ModelTier::Tier1,
+                ModelTier::Tier2,
+                ModelTier::Tier3,
+                ModelTier::Tier0,
+            ],
+            ModelTier::Tier2 => vec![
+                ModelTier::Tier2,
+                ModelTier::Tier3,
+                ModelTier::Tier1,
+                ModelTier::Tier0,
+            ],
+            ModelTier::Tier3 => vec![
+                ModelTier::Tier3,
+                ModelTier::Tier2,
+                ModelTier::Tier1,
+                ModelTier::Tier0,
+            ],
         };
 
         for &tier in &tiers_to_try {

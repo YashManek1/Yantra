@@ -27,7 +27,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use yantra_agents::{Agent, AgentContext, TaskResult};
-use yantra_core::{hex_encode, AgentKind, Outcome, SessionId, TaskId, TaskNode};
+use yantra_core::{hex_encode, AgentKind, Outcome, SessionId, TaskId, TaskNode, WorkspaceMode};
 use yantra_router::Router;
 use yantra_tools::McpRouter;
 
@@ -53,6 +53,7 @@ struct SchedulerInner {
     poll_interval: Duration,
     memory: Arc<yantra_memory::MemoryService>,
     task_results: Mutex<HashMap<TaskId, TaskResult>>,
+    workspace_mode: WorkspaceMode,
 }
 
 /// Background DAG scheduler.
@@ -81,6 +82,7 @@ impl Scheduler {
         session_id: SessionId,
         poll_interval: Duration,
         memory: Arc<yantra_memory::MemoryService>,
+        workspace_mode: WorkspaceMode,
     ) -> (Self, mpsc::UnboundedReceiver<TaskId>) {
         let (human_review_sender, human_review_receiver) = mpsc::unbounded_channel();
         let scheduler = Self {
@@ -98,6 +100,7 @@ impl Scheduler {
                 poll_interval,
                 memory,
                 task_results: Mutex::new(HashMap::new()),
+                workspace_mode,
             }),
         };
         (scheduler, human_review_receiver)
@@ -259,23 +262,10 @@ async fn poll_and_dispatch(inner: Arc<SchedulerInner>) {
 
         inner.circuit_breaker.record_call();
 
-        let upstream_ids = match inner.dag.dependencies_of(task_id) {
-            Ok(ids) => ids,
-            Err(e) => {
-                tracing::error!(?e, %task_id, "failed to query task dependencies");
-                let _ = inner.dag.mark_failed(task_id);
-                continue;
-            }
-        };
-        let mut upstream_results = Vec::new();
-        {
+        let upstream_results: Vec<yantra_agents::TaskResult> = {
             let results_map = inner.task_results.lock();
-            for upstream_id in upstream_ids {
-                if let Some(result) = results_map.get(&upstream_id).cloned() {
-                    upstream_results.push(result);
-                }
-            }
-        }
+            results_map.values().cloned().collect()
+        };
 
         let agent_context = AgentContext {
             router: Arc::clone(&inner.router),
@@ -283,6 +273,7 @@ async fn poll_and_dispatch(inner: Arc<SchedulerInner>) {
             session_id: inner.session_id,
             upstream_results,
             memory: Arc::clone(&inner.memory),
+            workspace_mode: inner.workspace_mode,
         };
 
         let _ = inner.event_bus.publish(AgentMessage::TaskStarted {
@@ -332,6 +323,7 @@ async fn apply_dispatch_result(
         }
         Err(agent_error) => {
             inner.circuit_breaker.probe_failed();
+            tracing::error!(%task_id, ?agent_kind, error = %agent_error, "agent returned error");
             apply_failure(task_id, &agent_error.to_string(), inner);
         }
     }

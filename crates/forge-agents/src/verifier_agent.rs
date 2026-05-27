@@ -24,8 +24,8 @@ use std::sync::LazyLock;
 use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use yantra_core::{AgentCapability, AgentKind, DecisionId, ModelTier, Outcome, TaskNode};
-use yantra_router::routing::RoutedCompletionRequest;
+use yantra_core::{AgentCapability, AgentKind, DecisionId, Outcome, TaskNode};
+use yantra_router::routing::{RoutedCompletionRequest, TaskDescription};
 use yantra_router::{CompletionRequest, Message, MessageRole};
 use yantra_verifier::parse_test_outcome;
 
@@ -232,17 +232,26 @@ impl Agent for VerifierAgent {
             stop_sequences: Vec::new(),
         };
 
-        let routed_request = RoutedCompletionRequest {
-            required_tier: ModelTier::Tier1,
-            completion_request: completion_request.clone(),
-        };
-
         tracing::debug!(
             task_id = %task.id,
             pre_parse_passed = pre_parse_outcome.all_passed,
             token_estimate = prompt_token_estimate,
-            "verifier routing verdict request to Tier-1"
+            "verifier routing verdict request via policy tier"
         );
+
+        let task_description_metadata = TaskDescription {
+            description: task.description.clone(),
+            class: task.class,
+            tokens_estimated: prompt_token_estimate,
+            tool_calls_predicted: 0,
+            touches_sacred_files: false,
+            multi_file: false,
+        };
+        let required_tier = context.router.policy().classify(&task_description_metadata);
+        let routed_request = RoutedCompletionRequest {
+            required_tier,
+            completion_request: completion_request.clone(),
+        };
 
         let model_provider = context
             .router

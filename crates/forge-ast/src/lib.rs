@@ -23,7 +23,9 @@ pub mod extractor;
 pub mod parser;
 pub mod symbol;
 
-pub use db::{create_schema, initialize_schema, insert_symbol, query_symbol, AST_SCHEMA_SQL};
+pub use db::{
+    create_schema, initialize_schema, insert_file, insert_symbol, query_symbol, AST_SCHEMA_SQL,
+};
 pub use error::{AstError, AstResult};
 pub use extractor::{
     extract_all, extract_calls, extract_imports, extract_symbols, CallSite, Import,

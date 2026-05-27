@@ -24,7 +24,7 @@ use tokio::sync::Notify;
 use yantra_agents::{Agent, AgentContext, AgentError, TaskResult};
 use yantra_core::{
     AgentCapability, AgentKind, DecisionId, ModelCapability, ModelTier, Outcome, SessionId,
-    TaskClass, TaskId, TaskNode, TaskStatus,
+    TaskClass, TaskId, TaskNode, TaskStatus, WorkspaceMode,
 };
 use yantra_orchestrator::{CircuitBreaker, DependencyInferrer, EventBus, Scheduler, TaskDag};
 use yantra_router::{
@@ -78,6 +78,7 @@ fn make_scheduler_with_agent(
         SessionId::new(),
         Duration::from_millis(10),
         memory,
+        WorkspaceMode::Incremental,
     )
 }
 
@@ -512,6 +513,7 @@ async fn failing_task_reaches_human_review_after_max_retries() {
         SessionId::new(),
         Duration::from_millis(10),
         memory,
+        WorkspaceMode::Incremental,
     );
 
     let task_id = TaskId::new();

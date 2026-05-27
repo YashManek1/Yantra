@@ -23,6 +23,7 @@ pub mod path;
 pub mod span;
 pub mod task;
 pub mod truth;
+pub mod workspace;
 
 pub use agent::{AgentCapability, AgentKind, AgentSpec};
 pub use db::{apply_migrations, connection_pool, DbPool, MIGRATION_VERSION_TABLE_SQL};
@@ -35,3 +36,4 @@ pub use task::{
     AugmentFuture, AugmentedQuestionTuple, AugmenterPort, TaskClass, TaskNode, TaskStatus,
 };
 pub use truth::{Strictness, TruthToken, VerifyingKey};
+pub use workspace::WorkspaceMode;

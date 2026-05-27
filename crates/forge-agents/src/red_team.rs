@@ -21,8 +21,8 @@ use std::sync::LazyLock;
 use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use yantra_core::{AgentCapability, AgentKind, DecisionId, ModelTier, Outcome, TaskNode};
-use yantra_router::routing::RoutedCompletionRequest;
+use yantra_core::{AgentCapability, AgentKind, DecisionId, Outcome, TaskNode};
+use yantra_router::routing::{RoutedCompletionRequest, TaskDescription};
 use yantra_router::{CompletionRequest, Message, MessageRole};
 
 use crate::agent::{Agent, AgentContext, TaskResult};
@@ -185,6 +185,11 @@ impl Agent for RedTeamAgent {
 
         let verdict_messages = Self::build_prompt(&diff_text, &task.description);
 
+        let prompt_token_estimate = verdict_messages
+            .iter()
+            .map(|message| message.content.len() / 4)
+            .sum::<usize>();
+
         let completion_request = CompletionRequest {
             messages: verdict_messages,
             max_tokens: Some(512),
@@ -193,8 +198,17 @@ impl Agent for RedTeamAgent {
             stop_sequences: Vec::new(),
         };
 
+        let task_description_metadata = TaskDescription {
+            description: task.description.clone(),
+            class: task.class,
+            tokens_estimated: prompt_token_estimate,
+            tool_calls_predicted: 0,
+            touches_sacred_files: false,
+            multi_file: false,
+        };
+        let required_tier = context.router.policy().classify(&task_description_metadata);
         let routed_request = RoutedCompletionRequest {
-            required_tier: ModelTier::Tier1,
+            required_tier,
             completion_request: completion_request.clone(),
         };
 

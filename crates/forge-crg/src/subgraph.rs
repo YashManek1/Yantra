@@ -352,6 +352,7 @@ pub fn extract_subgraph(
             &graph_cache.symbol_details,
             &node_provenances,
             include_docstrings,
+            token_budget > 350,
         );
 
         let token_cost = count_tokens(&rendered_text);
@@ -468,12 +469,73 @@ fn format_single_symbol(
     )
 }
 
+fn extract_crate_name(file_path: &str) -> String {
+    let normalized_path = file_path.replace('\\', "/");
+    let path_parts: Vec<&str> = normalized_path.split('/').collect();
+    if let Some(crates_position) = path_parts
+        .iter()
+        .position(|&path_part| path_part == "crates")
+    {
+        if crates_position + 1 < path_parts.len() {
+            return path_parts[crates_position + 1].to_owned();
+        }
+    }
+    if normalized_path.contains("try-yantra") {
+        "try-yantra".to_owned()
+    } else {
+        "unknown-crate".to_owned()
+    }
+}
+
+fn get_lifecycle_phase(file_path: &str) -> &'static str {
+    let lower_path = file_path.to_lowercase();
+    if lower_path.contains("forge-agents")
+        || lower_path.contains("agents")
+        || lower_path.contains("forge-orchestrator")
+        || lower_path.contains("orchestrator")
+        || lower_path.contains("forge-night")
+        || lower_path.contains("night")
+        || lower_path.contains("forge-sidecar")
+        || lower_path.contains("sidecar")
+        || lower_path.contains("forge-serve")
+        || lower_path.contains("serve")
+        || lower_path.contains("forge-cli")
+        || lower_path.contains("cli")
+        || lower_path.contains("forge-eval")
+        || lower_path.contains("eval")
+        || lower_path.contains("forge-router")
+        || lower_path.contains("router")
+        || lower_path.contains("forge-lsp")
+        || lower_path.contains("lsp")
+        || lower_path.contains("forge-tools")
+        || lower_path.contains("tools")
+        || lower_path.contains("forge-swarm")
+        || lower_path.contains("swarm")
+    {
+        "Runtime"
+    } else if lower_path.contains("forge-stvp")
+        || lower_path.contains("stvp")
+        || lower_path.contains("forge-verifier")
+        || lower_path.contains("verifier")
+    {
+        "PreFlight"
+    } else if lower_path.contains("forge-obs")
+        || lower_path.contains("obs")
+        || lower_path.contains("tracing")
+    {
+        "Observability"
+    } else {
+        "Persistence"
+    }
+}
+
 fn render_subgraph_text(
     symbols: &HashSet<SymbolId>,
     edges: &HashSet<EdgeDetails>,
     details_map: &HashMap<SymbolId, SymbolDetails>,
     node_provenances: &HashMap<SymbolId, (Option<SeedSource>, usize)>,
     include_docstrings: bool,
+    include_manifest: bool,
 ) -> String {
     let mut file_groups: HashMap<String, Vec<&SymbolDetails>> = HashMap::new();
     for symbol_id in symbols {
@@ -542,6 +604,27 @@ fn render_subgraph_text(
     for edge_string in rendered_edges {
         rendered_output.push_str(&edge_string);
         rendered_output.push('\n');
+    }
+
+    if include_manifest {
+        let mut module_boundary_manifest_block = String::new();
+        module_boundary_manifest_block.push_str("\n## MODULE-BOUNDARY MANIFEST\n");
+        let mut sorted_symbol_details: Vec<&SymbolDetails> = symbols
+            .iter()
+            .filter_map(|symbol_id| details_map.get(symbol_id))
+            .collect();
+        sorted_symbol_details
+            .sort_by(|first_symbol, second_symbol| first_symbol.name.cmp(&second_symbol.name));
+
+        for symbol in sorted_symbol_details {
+            let crate_name = extract_crate_name(&symbol.file_path);
+            let lifecycle_phase = get_lifecycle_phase(&symbol.file_path);
+            module_boundary_manifest_block.push_str(&format!(
+                "- Symbol: {} | Crate: {} | Phase: {}\n",
+                symbol.name, crate_name, lifecycle_phase
+            ));
+        }
+        rendered_output.push_str(&module_boundary_manifest_block);
     }
 
     rendered_output

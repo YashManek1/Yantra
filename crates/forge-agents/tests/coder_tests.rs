@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 use yantra_agents::{Agent, AgentContext, AgentError, CoderAgent};
 use yantra_core::{
     AgentKind, ModelCapability, ModelTier, Outcome, SessionId, Strictness, TaskClass, TaskId,
-    TaskNode, TaskStatus, TruthToken,
+    TaskNode, TaskStatus, TruthToken, WorkspaceMode,
 };
 use yantra_crg::{EmbeddingStore, GraphBuilder, GraphCache};
 use yantra_router::{
@@ -194,6 +194,7 @@ fn build_context_from_mcp(mcp_router: McpRouter, mock_response: String) -> Agent
         session_id: SessionId::new(),
         upstream_results: Vec::new(),
         memory,
+        workspace_mode: WorkspaceMode::Incremental,
     }
 }
 

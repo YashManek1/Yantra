@@ -28,6 +28,12 @@ Rules for Phase 1:
 - If zero relevant symbols appear in the subgraph, write: `GROUNDED SYMBOLS: none`
 - Do NOT yet answer the question in this phase.
 
+### Phase 1.5 — LIFECYCLE BOUNDARY CHECK
+
+Before answering, group your grounded symbols by their lifecycle phase (PreFlight / Runtime / Observability / Persistence) based on their crate annotations in the MODULE-BOUNDARY MANIFEST.
+
+If your answer crosses lifecycle boundaries (i.e. you are attributing behaviors of a PreFlight component to a Runtime component or vice versa), you MUST explicitly acknowledge the boundary crossing in your answer and describe it as a **handoff** or **communication**, not as the same component's behavior.
+
 ### Phase 2 — ANSWER (synthesize from Phase 1 only)
 
 Now answer the question. Every symbol name, struct, function, trait, module, and file path you cite MUST appear verbatim in your Phase 1 `GROUNDED SYMBOLS` list.
