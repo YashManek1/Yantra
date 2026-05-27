@@ -41,8 +41,8 @@ fn temp_project_root(label: &str) -> ProjectRoot {
     ProjectRoot::new(temp_path).unwrap()
 }
 
-#[test]
-fn new_feature_flow_produces_correct_source_truth() {
+#[tokio::test]
+async fn new_feature_flow_produces_correct_source_truth() {
     let project_root = temp_project_root("new-feature");
     let interrogator = Interrogator::new(project_root.clone());
 
@@ -60,12 +60,19 @@ fn new_feature_flow_produces_correct_source_truth() {
     ]);
 
     let source_truth = interrogator
-        .ask("add JWT rotation to auth service", &mock_ui)
+        .ask(
+            "add JWT rotation to auth service with external library",
+            &mock_ui,
+        )
+        .await
         .expect("interrogation succeeds for a well-answered new-feature task");
 
     assert_eq!(source_truth.task_class, TaskClass::NewFeature);
     assert_eq!(source_truth.strictness, Strictness::Strict);
-    assert_eq!(source_truth.description, "add JWT rotation to auth service");
+    assert_eq!(
+        source_truth.description,
+        "add JWT rotation to auth service with external library"
+    );
     assert_eq!(
         source_truth
             .answers
@@ -87,8 +94,8 @@ fn new_feature_flow_produces_correct_source_truth() {
         .contains("rotate_jwt"));
 }
 
-#[test]
-fn new_feature_truth_round_trips_through_disk() {
+#[tokio::test]
+async fn new_feature_truth_round_trips_through_disk() {
     let project_root = temp_project_root("disk-roundtrip");
     let interrogator = Interrogator::new(project_root.clone());
 
@@ -101,6 +108,7 @@ fn new_feature_truth_round_trips_through_disk() {
 
     let stored_truth = interrogator
         .ask("implement the new feature", &mock_ui)
+        .await
         .expect("interrogation succeeds");
 
     let loaded_truth =
@@ -109,8 +117,8 @@ fn new_feature_truth_round_trips_through_disk() {
     assert_eq!(stored_truth, loaded_truth);
 }
 
-#[test]
-fn bug_fix_flow_produces_light_strictness() {
+#[tokio::test]
+async fn bug_fix_flow_produces_light_strictness() {
     let project_root = temp_project_root("bug-fix");
     let interrogator = Interrogator::new(project_root);
 
@@ -129,6 +137,7 @@ fn bug_fix_flow_produces_light_strictness() {
 
     let source_truth = interrogator
         .ask("fix crash when opening settings", &mock_ui)
+        .await
         .expect("interrogation succeeds for a well-answered bug-fix task");
 
     assert_eq!(source_truth.task_class, TaskClass::BugFix);
@@ -147,23 +156,23 @@ fn bug_fix_flow_produces_light_strictness() {
     );
 }
 
-#[test]
-fn empty_description_is_rejected() {
+#[tokio::test]
+async fn empty_description_is_rejected() {
     let project_root = temp_project_root("empty-desc");
     let interrogator = Interrogator::new(project_root);
     let mock_ui = MockQuestionnaireUi::new(&[]);
     assert!(matches!(
-        interrogator.ask("", &mock_ui),
+        interrogator.ask("", &mock_ui).await,
         Err(StvpError::EmptyDescription)
     ));
 }
 
-#[test]
-fn missing_required_answer_is_rejected() {
+#[tokio::test]
+async fn missing_required_answer_is_rejected() {
     let project_root = temp_project_root("missing-answer");
     let interrogator = Interrogator::new(project_root);
     let mock_ui = MockQuestionnaireUi::new(&[("primary_files", "")]);
-    let result = interrogator.ask("add a new endpoint", &mock_ui);
+    let result = interrogator.ask("add a new endpoint", &mock_ui).await;
     assert!(
         matches!(result, Err(StvpError::MissingRequiredAnswer { ref question_id }) if question_id == "primary_files"),
         "expected MissingRequiredAnswer for primary_files, got {result:?}"
@@ -201,14 +210,17 @@ fn question_answer_kind_is_accessible() {
         text: "Is this a test?".to_owned(),
         answer_kind: AnswerKind::YesNo,
         required: true,
+        augmented: false,
+        suggested_answer: None,
+        help_text: None,
     };
 
     assert_eq!(question.answer_kind, AnswerKind::YesNo);
     assert!(question.required);
 }
 
-#[test]
-fn source_truth_yaml_is_stable_across_serializations() {
+#[tokio::test]
+async fn source_truth_yaml_is_stable_across_serializations() {
     let project_root = temp_project_root("yaml-stable");
     let interrogator = Interrogator::new(project_root);
 
@@ -221,6 +233,7 @@ fn source_truth_yaml_is_stable_across_serializations() {
 
     let source_truth = interrogator
         .ask("implement rate limiting", &mock_ui)
+        .await
         .expect("interrogation succeeds");
 
     let yaml_first = source_truth.to_yaml().expect("first serialization");

@@ -39,6 +39,7 @@ fn make_truth(task_id: TaskId, success_criterion: &str) -> SourceTruth {
         description: "add JWT refresh token rotation".to_owned(),
         created_at: Utc::now(),
         answers,
+        augmented_question_ids: Vec::new(),
     }
 }
 
