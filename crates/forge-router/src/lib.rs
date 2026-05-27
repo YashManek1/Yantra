@@ -32,5 +32,5 @@ pub use provider::{
 pub use providers::{
     github_models::GitHubModelsProvider, ollama::OllamaProvider, openrouter::OpenRouterProvider,
 };
-pub use routing::{Router, RoutingPolicy, TaskDescription};
+pub use routing::{RoutedCompletionRequest, Router, RoutingPolicy, TaskDescription};
 pub use translator::PromptTranslator;

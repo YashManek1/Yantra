@@ -26,9 +26,23 @@ use std::sync::Mutex;
 use yantra_core::TaskNode;
 use yantra_stvp::verify_token;
 
+pub mod circuit_breaker;
+pub mod csp_planner;
+pub mod dag;
+pub mod dependency_inference;
 pub mod error;
+pub mod event_bus;
+pub mod scheduler;
+pub mod speculation_engine;
 
-pub use error::SchedulingError;
+pub use circuit_breaker::{CircuitBreaker, CircuitState};
+pub use csp_planner::{Constraint, CspPlanner, Plan};
+pub use dag::TaskDag;
+pub use dependency_inference::DependencyInferrer;
+pub use error::{OrchestratorError, SchedulingError};
+pub use event_bus::{AgentMessage, EventBus};
+pub use scheduler::Scheduler;
+pub use speculation_engine::{SpeculatedTask, SpeculationEngine};
 
 /// Orchestrates task execution behind an STVP token gate.
 ///
@@ -36,8 +50,9 @@ pub use error::SchedulingError;
 /// against the session public key before enqueuing the task. Tasks without a
 /// token or with an invalid signature are rejected immediately.
 ///
-/// Full DAG scheduling, the Debate Engine, and the CSP Planner are added in
-/// the Day 4 wave.
+/// The full DAG scheduler, event bus, circuit breaker, CSP planner, and
+/// speculation engine are available as standalone composable types in the
+/// sub-modules of this crate.
 pub struct Orchestrator {
     yantra_dir: PathBuf,
     queue: Mutex<Vec<TaskNode>>,
@@ -123,6 +138,7 @@ mod tests {
             description: "add JWT rotation".to_owned(),
             created_at: Utc::now(),
             answers: BTreeMap::new(),
+            augmented_question_ids: Vec::new(),
         }
     }
 

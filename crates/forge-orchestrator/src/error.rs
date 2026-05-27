@@ -1,18 +1,29 @@
-//! # forge-orchestrator: Scheduling Error Types
+//! # forge-orchestrator: Error Types
 //!
-//! Typed errors returned by `Orchestrator::schedule_task`. Every variant
-//! includes the `task_id` that triggered the failure so callers can log or
-//! surface it without re-extracting it from the original `TaskNode`.
+//! All typed errors produced by the orchestrator subsystems: DAG persistence,
+//! scheduling, circuit breaker, CSP planner, event bus, dependency inference,
+//! and the speculation engine.
+//!
+//! ## Input
+//! - Underlying errors from rusqlite, forge-router, forge-agents, forge-obs
+//!
+//! ## Output
+//! - `SchedulingError` — token gate errors (unchanged for backward compatibility)
+//! - `OrchestratorError` — all other orchestrator subsystem errors
 //!
 //! ## Related
-//! - `forge-orchestrator::Orchestrator` — the only producer of these errors
-//! - `forge-stvp::StvpError` — wrapped in `TokenVerificationFailed`
+//! - `forge-orchestrator::dag` — produces `OrchestratorError::Database`
+//! - `forge-orchestrator::scheduler` — produces `OrchestratorError::AgentFailed`
+//! - `forge-stvp` — `StvpError` wrapped in `SchedulingError::TokenVerificationFailed`
 
 use thiserror::Error;
-
+use yantra_core::AgentKind;
 use yantra_stvp::StvpError;
 
-/// All errors that can occur when submitting a task to the orchestrator.
+/// Errors returned when submitting a task through the STVP token gate.
+///
+/// These variants are preserved unchanged so existing callers that match on
+/// `SchedulingError` continue to compile without modification.
 #[derive(Debug, Error)]
 pub enum SchedulingError {
     /// The task carries no truth token.
@@ -40,4 +51,84 @@ pub enum SchedulingError {
         #[source]
         source: StvpError,
     },
+}
+
+/// All errors produced by orchestrator subsystems other than the token gate.
+#[derive(Debug, Error)]
+pub enum OrchestratorError {
+    /// A SQLite database operation failed.
+    #[error("database error: {0}")]
+    Database(String),
+
+    /// No agent is registered in the scheduler for the requested kind.
+    #[error("no agent registered for kind {kind:?}")]
+    NoAgentRegistered {
+        /// The agent kind for which no registration exists.
+        kind: AgentKind,
+    },
+
+    /// The model router failed to select a provider.
+    #[error("router error: {0}")]
+    Router(String),
+
+    /// A model provider returned an error response.
+    #[error("provider error: {0}")]
+    Provider(String),
+
+    /// An agent returned an error while executing a task.
+    #[error("agent execution failed for task {task_id}: {reason}")]
+    AgentFailed {
+        /// Task that the agent was executing.
+        task_id: String,
+        /// Human-readable failure description.
+        reason: String,
+    },
+
+    /// A JSON parse or serialization operation failed.
+    #[error("JSON error: {0}")]
+    JsonParsing(String),
+
+    /// An observability persistence operation failed.
+    #[error("observability error: {0}")]
+    Obs(String),
+
+    /// The circuit breaker is open and dispatch is paused.
+    #[error("circuit breaker open: {calls_per_minute} calls/min exceeds limit")]
+    CircuitBreakerOpen {
+        /// Measured LLM calls per minute that triggered the open transition.
+        calls_per_minute: u32,
+    },
+
+    /// The CSP planner detected a contradiction among hard constraints.
+    #[error("CSP contradiction: {0}")]
+    CspContradiction(String),
+
+    /// A task ID was referenced in the DAG but the row does not exist.
+    #[error("task {task_id} not found in DAG")]
+    TaskNotFound {
+        /// String representation of the missing task identifier.
+        task_id: String,
+    },
+
+    /// The task dependency graph contains a cycle.
+    #[error("cyclic dependency detected in task graph")]
+    CyclicDependency,
+}
+
+impl From<rusqlite::Error> for OrchestratorError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Database(error.to_string())
+    }
+}
+
+impl From<serde_json::Error> for OrchestratorError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::JsonParsing(error.to_string())
+    }
+}
+
+impl From<yantra_obs::ObsError> for OrchestratorError {
+    fn from(error: yantra_obs::ObsError) -> Self {
+        Self::Obs(error.to_string())
+    }
 }

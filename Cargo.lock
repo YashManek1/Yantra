@@ -4901,9 +4901,11 @@ name = "yantra-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "clap",
  "inquire",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
@@ -4921,6 +4923,7 @@ dependencies = [
  "yantra-router",
  "yantra-serve",
  "yantra-stvp",
+ "yantra-tokenizer",
 ]
 
 [[package]]
@@ -5041,14 +5044,22 @@ dependencies = [
 name = "yantra-orchestrator"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
+ "parking_lot",
+ "proptest",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "yantra-agents",
  "yantra-core",
  "yantra-obs",
+ "yantra-router",
  "yantra-stvp",
+ "yantra-tools",
 ]
 
 [[package]]
@@ -5114,12 +5125,12 @@ dependencies = [
  "serde",
  "serde_yaml",
  "thiserror 1.0.69",
+ "tokio",
+ "toml",
  "tracing",
  "uuid",
  "yantra-ast",
  "yantra-core",
- "yantra-crg",
- "yantra-memory",
 ]
 
 [[package]]
