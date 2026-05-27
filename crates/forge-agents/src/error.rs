@@ -35,4 +35,12 @@ pub enum AgentError {
     /// Prompt assembly failed before the model call.
     #[error("prompt assembly failed: {0}")]
     PromptAssembly(String),
+
+    /// Subprocess execution failed inside an agent.
+    #[error("subprocess error: {0}")]
+    Subprocess(String),
+
+    /// Ed25519 commit signing failed.
+    #[error("commit signing failed: {0}")]
+    CommitSigning(String),
 }

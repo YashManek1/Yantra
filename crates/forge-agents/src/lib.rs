@@ -12,17 +12,29 @@
 //!
 //! ## Output
 //! - `TaskResult` containing proposed diffs forwarded to `forge-verifier`
-//! - `AgentEvent` messages published to the multi-agent event bus (Day 3+)
+//! - `AgentEvent` messages published to the multi-agent event bus
 //!
 //! ## Related
 //! - `forge-router` — all LLM calls route through the model router
 //! - `forge-tools` — agents invoke MCP tools via this crate
-//! - `forge-verifier` — every diff passes through the three gates (Day 4+)
+//! - `forge-verifier` — every diff passes through the three gates
 
 pub mod agent;
 pub mod coder;
+pub mod committer;
 pub mod error;
+pub mod refactorer;
+pub mod researcher;
+pub mod tester;
+pub mod verifier_agent;
 
 pub use agent::{Agent, AgentContext, Diff, FileDiff, TaskResult};
 pub use coder::CoderAgent;
+pub use committer::{CommitMessage, CommitSigningKey, CommitterAgent};
 pub use error::AgentError;
+pub use refactorer::RefactorerAgent;
+pub use researcher::{parse_research_memo, ResearchFinding, ResearchMemo, ResearcherAgent};
+pub use tester::{run_and_report_test_failures, TesterAgent};
+pub use verifier_agent::{
+    extract_project_root_from_task, parse_verifier_verdict, VerifierAgent, VerifierVerdict,
+};
