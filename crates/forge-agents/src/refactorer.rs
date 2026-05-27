@@ -194,7 +194,8 @@ impl Agent for RefactorerAgent {
         let model_provider = context
             .router
             .route(&routed_request)
-            .map_err(|router_error| AgentError::ModelProvider(router_error.to_string()))?;
+            .await
+            .map_err(|error| AgentError::ModelProvider(error.to_string()))?;
 
         let completion_response = model_provider
             .complete(completion_request)

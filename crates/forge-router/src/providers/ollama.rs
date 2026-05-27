@@ -95,15 +95,130 @@ impl ModelProvider for OllamaProvider {
         request: CompletionRequest,
     ) -> Result<CompletionResponse, ProviderError> {
         let request_body = PromptTranslator::to_ollama(&request, &self.model);
-        let response_body = self
-            .client
-            .post(format!("{}/api/chat", self.endpoint))
-            .json(&request_body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Value>()
-            .await?;
+        let mut attempts = 0;
+        let mut delay = std::time::Duration::from_secs(1);
+        let response_body = loop {
+            match self
+                .client
+                .post(format!("{}/api/chat", self.endpoint))
+                .json(&request_body)
+                .send()
+                .await
+            {
+                Ok(response) => match response.error_for_status() {
+                    Ok(res) => match res.json::<Value>().await {
+                        Ok(json) => break json,
+                        Err(err) => {
+                            attempts += 1;
+                            if attempts >= 3 {
+                                return Err(ProviderError::InvalidResponse(err.to_string()));
+                            }
+                            tokio::time::sleep(delay).await;
+                            delay *= 2;
+                        }
+                    },
+                    Err(err) => {
+                        attempts += 1;
+                        if attempts >= 3 {
+                            return Err(ProviderError::Http(err));
+                        }
+                        tokio::time::sleep(delay).await;
+                        delay *= 2;
+                    }
+                },
+                Err(err) => {
+                    attempts += 1;
+                    if attempts >= 3 {
+                        return Err(ProviderError::Http(err));
+                    }
+                    tokio::time::sleep(delay).await;
+                    delay *= 2;
+                }
+            }
+        };
         PromptTranslator::from_ollama(&response_body)
+    }
+
+    async fn complete_stream(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<String, ProviderError>> + Send>>,
+        ProviderError,
+    > {
+        let mut request_body = PromptTranslator::to_ollama(&request, &self.model);
+        request_body["stream"] = serde_json::Value::Bool(true);
+
+        let mut attempts = 0;
+        let mut delay = std::time::Duration::from_secs(1);
+        let response = loop {
+            match self
+                .client
+                .post(format!("{}/api/chat", self.endpoint))
+                .json(&request_body)
+                .send()
+                .await
+            {
+                Ok(res) => match res.error_for_status() {
+                    Ok(ok_res) => break ok_res,
+                    Err(err) => {
+                        attempts += 1;
+                        if attempts >= 3 {
+                            return Err(ProviderError::Http(err));
+                        }
+                        tokio::time::sleep(delay).await;
+                        delay *= 2;
+                    }
+                },
+                Err(err) => {
+                    attempts += 1;
+                    if attempts >= 3 {
+                        return Err(ProviderError::Http(err));
+                    }
+                    tokio::time::sleep(delay).await;
+                    delay *= 2;
+                }
+            }
+        };
+
+        let (sender, receiver) = tokio::sync::mpsc::channel(100);
+        let mut bytes_stream = response.bytes_stream();
+
+        tokio::spawn(async move {
+            use futures_util::StreamExt;
+            let mut line_buffer = String::new();
+            while let Some(chunk_result) = bytes_stream.next().await {
+                match chunk_result {
+                    Ok(bytes) => {
+                        if let Ok(text) = std::str::from_utf8(&bytes) {
+                            line_buffer.push_str(text);
+                            while let Some(index) = line_buffer.find('\n') {
+                                let line = line_buffer[..index].trim().to_string();
+                                line_buffer = line_buffer[index + 1..].to_string();
+                                if !line.is_empty() {
+                                    if let Ok(value) =
+                                        serde_json::from_str::<serde_json::Value>(&line)
+                                    {
+                                        if let Some(content) = value["message"]["content"].as_str()
+                                        {
+                                            if sender.send(Ok(content.to_string())).await.is_err() {
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        let _ = sender.send(Err(ProviderError::Http(err))).await;
+                        return;
+                    }
+                }
+            }
+        });
+
+        let receiver_stream = crate::provider::ReceiverStream::new(receiver);
+        Ok(Box::pin(receiver_stream))
     }
 }

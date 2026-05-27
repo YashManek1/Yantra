@@ -22,10 +22,11 @@ use async_trait::async_trait;
 use serde_json::json;
 use yantra_core::{AgentCapability, AgentKind, DecisionId, Outcome, TaskNode};
 use yantra_router::routing::RoutedCompletionRequest;
-use yantra_router::{CompletionRequest, Message, MessageRole, TaskDescription};
+use yantra_router::{CompletionRequest, Message, MessageRole, TaskDescription, ToolSpec};
 
 use crate::agent::{Agent, AgentContext, Diff, FileDiff, TaskResult};
 use crate::error::AgentError;
+use crate::researcher::ResearchMemo;
 
 const CODER_SYSTEM_PROMPT: &str = include_str!("../prompts/coder.md");
 
@@ -75,12 +76,13 @@ impl Default for CoderAgent {
     }
 }
 
-/// Parses all `// File: <path>` unified-diff blocks from a model response.
-fn parse_diffs_from_response(response_text: &str) -> Vec<FileDiff> {
+/// Parses all `// File: <path>` or `// Create File: <path>` blocks from a model response.
+pub fn parse_diffs_from_response(response_text: &str) -> Vec<FileDiff> {
     let normalized = response_text.replace("\r\n", "\n");
     let searchable = format!("\n{normalized}");
+    let normalized_searchable = searchable.replace("\n// Create File: ", "\n// File: ");
 
-    searchable
+    normalized_searchable
         .split("\n// File: ")
         .skip(1)
         .filter_map(|section| {
@@ -132,48 +134,211 @@ impl Agent for CoderAgent {
             .unwrap_or("")
             .to_owned();
 
-        let truth_summary = format!(
+        let mut truth_summary = format!(
             "Task ID: {}\nClass: {:?}\nStrictness: {:?}",
             truth_token.task_id, truth_token.task_class, truth_token.strictness
         );
+
+        let mut memory_context = String::new();
+        if let Ok(assembled) = context.memory.assemble_agent_context(
+            context.session_id.as_uuid(),
+            task.class,
+            &task.description,
+            4096,
+        ) {
+            memory_context = assembled;
+        }
+
+        if !memory_context.is_empty() {
+            truth_summary = format!("{}\n\n{}", memory_context.trim(), truth_summary);
+        }
+
+        let mut task_description = task.description.clone();
+        let mut temperature = 0.2;
+        for upstream in &context.upstream_results {
+            if let Ok(memo) = serde_json::from_str::<ResearchMemo>(&upstream.summary) {
+                let mut findings_text = String::new();
+                for finding in &memo.findings {
+                    findings_text.push_str(&format!(
+                        "- {} (confidence: {}, source: {})\n",
+                        finding.claim, finding.confidence, finding.source_tool
+                    ));
+                }
+                let research_context = format!(
+                    "## Research Context\nSummary: {}\nFindings:\n{}\n",
+                    memo.summary, findings_text
+                );
+                task_description = format!("{}\n\n{}", research_context.trim(), task_description);
+                temperature = 0.1;
+                break;
+            }
+        }
+
         let messages =
-            Self::assemble_prompt_messages(&truth_summary, &subgraph_text, &task.description);
+            Self::assemble_prompt_messages(&truth_summary, &subgraph_text, &task_description);
 
-        let prompt_text: String = messages
-            .iter()
-            .map(|message| message.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let tool_specifications = vec![
+            ToolSpec {
+                name: "fs.read_file".to_owned(),
+                description: "Reads a UTF-8 file and returns content, size, and hash.".to_owned(),
+                parameters_json_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Relative path to target file"
+                        }
+                    },
+                    "required": ["path"]
+                }),
+            },
+            ToolSpec {
+                name: "fs.write_file".to_owned(),
+                description: "Writes a file atomically with sacred-file enforcement.".to_owned(),
+                parameters_json_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Relative path to target file"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Full file content to write"
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["overwrite", "create_new"]
+                        }
+                    },
+                    "required": ["path", "content", "mode"]
+                }),
+            },
+            ToolSpec {
+                name: "fs.apply_diff".to_owned(),
+                description: "Applies a unified diff or creation payload to a file.".to_owned(),
+                parameters_json_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Relative path to target file"
+                        },
+                        "diff": {
+                            "type": "string",
+                            "description": "Unified diff content or creation payload"
+                        }
+                    },
+                    "required": ["path", "diff"]
+                }),
+            },
+            ToolSpec {
+                name: "git.status".to_owned(),
+                description: "Queries the git status of the project.".to_owned(),
+                parameters_json_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            ToolSpec {
+                name: "crg.subgraph".to_owned(),
+                description: "Extracts a token-budgeted subgraph of symbols from the code graph."
+                    .to_owned(),
+                parameters_json_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "Natural language task or query description"
+                        },
+                        "budget": {
+                            "type": "integer",
+                            "description": "Maximum tokens allowed in returned context"
+                        }
+                    },
+                    "required": ["task"]
+                }),
+            },
+        ];
 
-        let completion_request = CompletionRequest {
+        let mut completion_request = CompletionRequest {
             messages,
             max_tokens: Some(2048),
-            temperature: 0.2,
-            tools: None,
+            temperature,
+            tools: Some(tool_specifications),
             stop_sequences: Vec::new(),
         };
 
-        let task_desc = TaskDescription {
-            description: task.description.clone(),
-            class: task.class,
-            tokens_estimated: prompt_text.len() / 4,
-            tool_calls_predicted: 0,
-            touches_sacred_files: false,
-            multi_file: false,
+        let mut loop_counter = 0;
+        let completion_response = loop {
+            if loop_counter >= 5 {
+                return Err(AgentError::ModelProvider(
+                    "Max tool-calling iterations reached".to_owned(),
+                ));
+            }
+
+            let prompt_text: String = completion_request
+                .messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let task_description_metadata = TaskDescription {
+                description: task.description.clone(),
+                class: task.class,
+                tokens_estimated: prompt_text.len() / 4,
+                tool_calls_predicted: if loop_counter == 0 { 2 } else { 0 },
+                touches_sacred_files: false,
+                multi_file: false,
+            };
+            let required_tier = context.router.policy().classify(&task_description_metadata);
+            let routed_request = RoutedCompletionRequest {
+                required_tier,
+                completion_request: completion_request.clone(),
+            };
+            let model_provider = context
+                .router
+                .route(&routed_request)
+                .await
+                .map_err(|error| AgentError::ModelProvider(error.to_string()))?;
+            let response = model_provider
+                .complete(completion_request.clone())
+                .await
+                .map_err(|error| AgentError::ModelProvider(error.to_string()))?;
+
+            completion_request.messages.push(Message {
+                role: MessageRole::Assistant,
+                content: response.content.clone(),
+                tool_calls: response.tool_calls.clone(),
+            });
+
+            if response.finish_reason != yantra_router::FinishReason::ToolCalls
+                || response.tool_calls.is_empty()
+            {
+                break response;
+            }
+
+            for tool_call in &response.tool_calls {
+                let arguments_value: serde_json::Value =
+                    serde_json::from_str(&tool_call.arguments).unwrap_or_else(|_| json!({}));
+                let tool_result = context.tools.handle(&tool_call.name, arguments_value).await;
+                let tool_result_string = match tool_result {
+                    Ok(result_value) => result_value.to_string(),
+                    Err(error_value) => format!("Error: {}", error_value.message),
+                };
+
+                let tool_content =
+                    format!("__tool_call_id__:{}\n{}", tool_call.id, tool_result_string);
+                completion_request.messages.push(Message {
+                    role: MessageRole::Tool,
+                    content: tool_content,
+                    tool_calls: Vec::new(),
+                });
+            }
+
+            loop_counter += 1;
         };
-        let required_tier = context.router.policy().classify(&task_desc);
-        let routed = RoutedCompletionRequest {
-            required_tier,
-            completion_request: completion_request.clone(),
-        };
-        let provider = context
-            .router
-            .route(&routed)
-            .map_err(|error| AgentError::ModelProvider(error.to_string()))?;
-        let completion_response = provider
-            .complete(completion_request)
-            .await
-            .map_err(|error| AgentError::ModelProvider(error.to_string()))?;
 
         let file_diffs = parse_diffs_from_response(&completion_response.content);
         let diff = if file_diffs.is_empty() {

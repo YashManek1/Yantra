@@ -27,6 +27,7 @@ pub use mcp::{
     JsonRpcErrorObject, JsonRpcRequest, JsonRpcResponse, McpRouter, McpServer, ToolCapability,
 };
 pub use tools::crg::CrgMcpServer;
+pub use tools::diff_apply::apply_diff_to_file;
 pub use tools::fs::FsMcpServer;
 pub use tools::git::GitMcpServer;
 pub use tools::lsp::LspMcpServer;

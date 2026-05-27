@@ -26,18 +26,28 @@
 //! - `forge-orchestrator` — STVP-gated task queue
 //! - `forge-crg` — CRG subgraph extraction for Coder context
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
-use yantra_core::{AgentKind, ModelTier, ProjectRoot, TaskNode, TaskStatus};
+use futures_util::StreamExt;
+use yantra_agents::{
+    parse_diffs_from_response, Agent, CoderAgent, CommitSigningKey, CommitterAgent, RedTeamAgent,
+    ResearcherAgent, VerifierAgent,
+};
+use yantra_core::{AgentKind, ProjectRoot, SessionId, TaskNode, TaskStatus};
 use yantra_crg::{EmbeddingStore, GraphCache};
-use yantra_orchestrator::Orchestrator;
+use yantra_orchestrator::{CircuitBreaker, EventBus, Orchestrator, Scheduler, TaskDag};
 use yantra_router::routing::RoutedCompletionRequest;
 use yantra_router::{CompletionRequest, Message, MessageRole, Router, TaskDescription};
 use yantra_stvp::{
     issue_token, run_all, Interrogator, Language, ProjectContext, Question, QuestionnaireUi,
     SigningKey, SourceTruth, SpecCompiler, StvpError, ViolationSeverity,
+};
+use yantra_tools::apply_diff_to_file;
+use yantra_verifier::{
+    Diff as VerifierDiff, VerificationContext, VerificationPipeline, VerificationResult,
 };
 
 /// `QuestionnaireUi` implementation that uses `inquire::Text` for each prompt.
@@ -175,6 +185,173 @@ pub async fn run_command(
         parent_decision_id: None,
     };
 
+    let is_complex = truth.task_class == yantra_core::TaskClass::NewFeature
+        || truth.task_class == yantra_core::TaskClass::Refactor
+        || truth
+            .answers
+            .get("sacred_files")
+            .is_some_and(|list| !list.trim().is_empty());
+
+    if is_complex {
+        println!(
+            "\nComplex or Sacred task class ({:?}) detected.",
+            truth.task_class
+        );
+        println!("Initializing Multi-Agent DAG scheduler...");
+
+        let dag = Arc::new(TaskDag::open(&yantra_dir)?);
+        dag.clear()?;
+
+        let session_id = SessionId::from_uuid(truth.task_id.as_uuid());
+        let event_bus = EventBus::open(&yantra_dir, session_id)?;
+        let circuit_breaker = Arc::new(CircuitBreaker::new(100));
+
+        let mut agents: std::collections::HashMap<AgentKind, Arc<dyn Agent>> =
+            std::collections::HashMap::new();
+        agents.insert(AgentKind::Researcher, Arc::new(ResearcherAgent::new()));
+        agents.insert(AgentKind::Coder, Arc::new(CoderAgent::new()));
+        agents.insert(AgentKind::IntegrityChecker, Arc::new(VerifierAgent::new()));
+        agents.insert(AgentKind::RedTeam, Arc::new(RedTeamAgent::new()));
+
+        let signing_key_commit =
+            CommitSigningKey::generate().context("failed to generate commit key")?;
+        agents.insert(
+            AgentKind::Committer,
+            Arc::new(CommitterAgent::new(signing_key_commit)),
+        );
+
+        let db_path = yantra_dir.join("memory.sqlite");
+        let memory_service = Arc::new(yantra_memory::MemoryService::new(&db_path)?);
+
+        let mut mcp_router = yantra_tools::McpRouter::new([
+            "crg.subgraph".to_owned(),
+            "fs.read_file".to_owned(),
+            "fs.write_file".to_owned(),
+            "fs.apply_diff".to_owned(),
+            "git.commit".to_owned(),
+            "git.log".to_owned(),
+            "git.status".to_owned(),
+        ]);
+
+        let fs_server = Arc::new(yantra_tools::FsMcpServer::new(project_root.clone()));
+        mcp_router.register_server(fs_server);
+
+        let git_server = Arc::new(yantra_tools::GitMcpServer::new(project_root.clone()));
+        mcp_router.register_server(git_server);
+
+        let lsp_bridge = yantra_lsp::LspBridge::new(project_root.as_path());
+        let lsp_server = Arc::new(yantra_tools::LspMcpServer::new(lsp_bridge));
+        mcp_router.register_server(lsp_server);
+
+        if let Ok(connection) = rusqlite::Connection::open(yantra_dir.join("crg.sqlite")) {
+            let embedding_store = yantra_crg::EmbeddingStore::new().ok();
+            let graph_cache = yantra_crg::GraphCache::build(&connection).ok();
+            if let (Some(store), Some(cache)) = (embedding_store, graph_cache) {
+                let _ = store.load_vectors_from_db(&connection);
+                let crg_server =
+                    Arc::new(yantra_tools::CrgMcpServer::new(connection, store, cache));
+                mcp_router.register_server(crg_server);
+            }
+        }
+
+        let (scheduler, _review_receiver) = Scheduler::new(
+            dag.clone(),
+            agents,
+            event_bus.clone(),
+            circuit_breaker,
+            router.clone(),
+            mcp_router,
+            session_id,
+            std::time::Duration::from_millis(50),
+            memory_service.clone(),
+        );
+
+        let researcher_task_id = yantra_core::TaskId::new();
+        let researcher_node = TaskNode {
+            id: researcher_task_id,
+            description: format!("Research the implementation details of: {description}"),
+            status: TaskStatus::Pending,
+            class: truth.task_class,
+            dependencies: Vec::new(),
+            assigned_agent: Some(AgentKind::Researcher),
+            truth_token: Some(truth_token.clone()),
+            parent_decision_id: None,
+        };
+
+        let coder_task_id = yantra_core::TaskId::new();
+        let coder_node = TaskNode {
+            id: coder_task_id,
+            description: description.clone(),
+            status: TaskStatus::Pending,
+            class: truth.task_class,
+            dependencies: vec![researcher_task_id],
+            assigned_agent: Some(AgentKind::Coder),
+            truth_token: Some(truth_token.clone()),
+            parent_decision_id: None,
+        };
+
+        let verifier_task_id = yantra_core::TaskId::new();
+        let verifier_node = TaskNode {
+            id: verifier_task_id,
+            description: format!("Verify changes from coder task {coder_task_id}"),
+            status: TaskStatus::Pending,
+            class: truth.task_class,
+            dependencies: vec![coder_task_id],
+            assigned_agent: Some(AgentKind::IntegrityChecker),
+            truth_token: Some(truth_token.clone()),
+            parent_decision_id: None,
+        };
+
+        let red_team_task_id = yantra_core::TaskId::new();
+        let red_team_node = TaskNode {
+            id: red_team_task_id,
+            description: format!(
+                "Perform security and robustness audit on changes from coder task {coder_task_id}"
+            ),
+            status: TaskStatus::Pending,
+            class: truth.task_class,
+            dependencies: vec![verifier_task_id],
+            assigned_agent: Some(AgentKind::RedTeam),
+            truth_token: Some(truth_token.clone()),
+            parent_decision_id: None,
+        };
+
+        let committer_task_id = yantra_core::TaskId::new();
+        let committer_node = TaskNode {
+            id: committer_task_id,
+            description: format!(
+                "Commit successfully verified changes from coder task {coder_task_id}"
+            ),
+            status: TaskStatus::Pending,
+            class: truth.task_class,
+            dependencies: vec![red_team_task_id],
+            assigned_agent: Some(AgentKind::Committer),
+            truth_token: Some(truth_token.clone()),
+            parent_decision_id: None,
+        };
+
+        scheduler.register_task(researcher_node)?;
+        scheduler.register_task(coder_node)?;
+        scheduler.register_task(verifier_node)?;
+        scheduler.register_task(red_team_node)?;
+        scheduler.register_task(committer_node)?;
+
+        println!(
+            "✓ Multi-Agent DAG registered: Researcher -> Coder -> Verifier -> RedTeam -> Committer"
+        );
+        println!("Running DAG scheduler to completion...");
+
+        let results = scheduler
+            .run_to_completion()
+            .await
+            .context("DAG scheduler run failed")?;
+        println!("✓ Multi-Agent DAG finished execution successfully!");
+        for result in results {
+            println!("  - {}: {}", result.task_id, result.summary);
+        }
+        return Ok(());
+    }
+
     let orchestrator = Orchestrator::new(&yantra_dir);
     orchestrator
         .schedule_task(task_node.clone())
@@ -188,9 +365,7 @@ pub async fn run_command(
         println!("\n(No CRG index found — Coder will run without subgraph context.)");
     }
 
-    // ── Step 10: Coder run ───────────────────────────────────────────────────
-    println!("\nRunning Coder…");
-
+    // ── Step 10: Coder run with closed-loop verification & commit ─────────────
     let is_greenfield = is_greenfield_workspace(&project_root);
     if is_greenfield {
         println!(
@@ -198,14 +373,233 @@ pub async fn run_command(
         );
     }
 
-    let coder_response =
-        call_coder_via_router(&router, &truth, &subgraph_text, &description, is_greenfield).await?;
+    let db_path = project_root.as_path().join(".yantra").join("memory.sqlite");
+    let mut memory_context = String::new();
+    if let Ok(memory_service) = yantra_memory::MemoryService::new(&db_path) {
+        if let Ok(assembled) = memory_service.assemble_agent_context(
+            uuid::Uuid::new_v4(),
+            truth.task_class,
+            &description,
+            4096,
+        ) {
+            memory_context = assembled;
+        }
+    }
 
-    println!("\n{}", "─".repeat(72));
-    println!("Coder output:");
-    println!("{coder_response}");
-    println!("{}", "─".repeat(72));
-    println!("\n(Day 4: diff verification and auto-apply coming next)");
+    let mut retry_count = 0;
+    let mut feedback_context: Option<String> = None;
+
+    loop {
+        if retry_count > 0 {
+            println!("\nRetrying Coder agent (attempt {}/3)...", retry_count + 1);
+        } else {
+            println!("\nRunning Coder…");
+        }
+
+        let coder_response = call_coder_via_router(
+            &router,
+            &truth,
+            &subgraph_text,
+            &description,
+            is_greenfield,
+            feedback_context.as_deref(),
+            &memory_context,
+        )
+        .await?;
+
+        println!("\n{}", "─".repeat(72));
+        println!("Coder output (attempt {}):", retry_count + 1);
+        println!("{coder_response}");
+        println!("{}", "─".repeat(72));
+
+        println!("\nParsing diffs from response...");
+        let file_diffs = parse_diffs_from_response(&coder_response);
+        if file_diffs.is_empty() {
+            println!("No valid diffs or file creations found in the response.");
+            if retry_count >= 2 {
+                if let Ok(memory_service) = yantra_memory::MemoryService::new(&db_path) {
+                    let record = yantra_memory::MistakeRecord::new(
+                        truth.task_class,
+                        "parsing failed",
+                        "no valid diff blocks found in coder response",
+                        "the model did not output code blocks matching standard prefix",
+                    );
+                    let _ = memory_service.mistake_library().record_failure(&record);
+                }
+                anyhow::bail!(
+                    "Verification failed: max retries reached and no diffs could be parsed."
+                );
+            }
+            feedback_context = Some("Error: Your response did not contain any valid '// File: <path>' or '// Create File: <path>' blocks. Ensure you prefix each code block with the correct path annotation.".to_owned());
+            retry_count += 1;
+            continue;
+        }
+
+        println!("Applying diffs to disk...");
+        let mut apply_error: Option<String> = None;
+        for file_diff in &file_diffs {
+            if let Err(err) = apply_diff_to_file(
+                project_root.as_path(),
+                &file_diff.file_path,
+                &file_diff.unified_diff,
+            ) {
+                apply_error = Some(format!(
+                    "Failed to apply diff for {}: {}",
+                    file_diff.file_path, err
+                ));
+                break;
+            }
+        }
+
+        if let Some(err) = apply_error {
+            println!("Diff application failed: {err}");
+            if retry_count >= 2 {
+                if let Ok(memory_service) = yantra_memory::MemoryService::new(&db_path) {
+                    let record = yantra_memory::MistakeRecord::new(
+                        truth.task_class,
+                        "diff application failed",
+                        err.clone(),
+                        "hunk context match failed or file write permission error",
+                    );
+                    let _ = memory_service.mistake_library().record_failure(&record);
+                }
+                anyhow::bail!(
+                    "Verification failed: max retries reached. Diff application error: {err}"
+                );
+            }
+            feedback_context = Some(format!("Error: Diff application failed on disk:\n{err}\nPlease check file structures and produce standard unified diff hunks matching exact context lines."));
+            retry_count += 1;
+            continue;
+        }
+
+        let mut diff_text = String::new();
+        for file_diff in &file_diffs {
+            if is_greenfield {
+                diff_text.push_str(&format!(
+                    "// Create File: {}\n{}\n",
+                    file_diff.file_path, file_diff.unified_diff
+                ));
+            } else {
+                diff_text.push_str(&format!(
+                    "// File: {}\n{}\n",
+                    file_diff.file_path, file_diff.unified_diff
+                ));
+            }
+        }
+
+        let verifier_diff = VerifierDiff {
+            text: diff_text,
+            task_class: truth.task_class,
+        };
+
+        let verifier_ctx = VerificationContext {
+            project_root: project_root.as_path().to_path_buf(),
+            is_sacred_diff: truth
+                .answers
+                .get("sacred_files")
+                .is_some_and(|list| !list.trim().is_empty()),
+            crg_db_path: Some(project_root.as_path().join(".yantra").join("crg.sqlite")),
+        };
+
+        println!("Running verification pipeline...");
+        let verify_result =
+            VerificationPipeline::verify(&verifier_diff, &truth, &verifier_ctx, retry_count)
+                .await?;
+
+        match verify_result {
+            VerificationResult::Pass => {
+                println!("\n✓ Verification passed!");
+
+                println!("Committing changes...");
+                let git_server = yantra_tools::GitMcpServer::new(project_root.clone());
+                let commit_subject = format!(
+                    "feat: {}",
+                    description.lines().next().unwrap_or("automated task")
+                );
+                let commit_body = format!(
+                    "{}\n\nTask ID: {}\nOutcome: Success\n",
+                    commit_subject, truth.task_id
+                );
+                let commit_res = git_server.commit(&serde_json::json!({
+                    "message": commit_body,
+                }));
+                match commit_res {
+                    Ok(val) => {
+                        let hash = val
+                            .get("hash")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        println!("✓ Created signed commit: {hash}");
+                    }
+                    Err(e) => {
+                        println!("⚠️ Failed to create commit: {}", e.message);
+                    }
+                }
+
+                if let Ok(memory_service) = yantra_memory::MemoryService::new(&db_path) {
+                    let turn_id = uuid::Uuid::new_v4().to_string();
+                    let session_id_str = truth.task_id.to_string();
+                    let _ = memory_service
+                        .recall()
+                        .record_turn(&yantra_memory::ConversationTurn {
+                            id: turn_id,
+                            session_id: session_id_str.clone(),
+                            timestamp: chrono::Utc::now(),
+                            role: "assistant".to_owned(),
+                            content: coder_response.clone(),
+                            summary: Some(format!("Completed task: {description}")),
+                            tokens: None,
+                        });
+                    let _ = memory_service.recall().summarize_session(
+                        &session_id_str,
+                        &format!("Successfully completed task: {description}"),
+                        Some(&format!("Accomplished: {description}")),
+                        None,
+                        None,
+                    );
+                }
+
+                break;
+            }
+            VerificationResult::Reject { stage, violations } => {
+                println!("⚠️ Verification rejected at stage {stage:?}");
+                for violation in &violations {
+                    println!(
+                        "  - [{:?}] in {:?}: {}",
+                        violation.severity, violation.file_path, violation.message
+                    );
+                }
+
+                if retry_count >= 2 {
+                    if let Ok(memory_service) = yantra_memory::MemoryService::new(&db_path) {
+                        let violation_messages: Vec<String> =
+                            violations.iter().map(|v| v.message.clone()).collect();
+                        let record = yantra_memory::MistakeRecord::new(
+                            truth.task_class,
+                            format!("verification rejected at {stage:?}"),
+                            violation_messages.join("; "),
+                            "code changes violated truth constraints, static analysis checks, or failed test suites",
+                        );
+                        let _ = memory_service.mistake_library().record_failure(&record);
+                    }
+                    anyhow::bail!("Verification failed: max retries reached without passing.");
+                }
+
+                let mut feedback = format!(
+                    "Your previous changes were rejected at stage {stage:?}.\nViolations:\n"
+                );
+                for violation in &violations {
+                    feedback.push_str(&format!("- {}\n", violation.message));
+                }
+                feedback_context = Some(feedback);
+                retry_count += 1;
+            }
+            VerificationResult::NeedHumanReview { reason } => {
+                println!("🚨 Escalating to human review: {reason}");
+                anyhow::bail!("Verification failed: need human review.");
+            }
+        }
+    }
 
     Ok(())
 }
@@ -330,6 +724,8 @@ async fn call_coder_via_router(
     subgraph_text: &str,
     description: &str,
     is_greenfield: bool,
+    feedback_context: Option<&str>,
+    memory_context: &str,
 ) -> anyhow::Result<String> {
     let mut truth_summary = format!(
         "Task ID:     {}\nClass:       {:?}\nStrictness:  {:?}\nDescription: {}",
@@ -341,7 +737,7 @@ async fn call_coder_via_router(
         }
     }
 
-    let user_content = if is_greenfield {
+    let mut user_content = if is_greenfield {
         format!(
             "## Source Truth\n{truth_summary}\n\n\
              ## Task\n{description}\n\n\
@@ -361,6 +757,16 @@ async fn call_coder_via_router(
              Phase 1: extract grounded symbols. Phase 2: produce unified diffs."
         )
     };
+
+    if !memory_context.is_empty() {
+        user_content.push_str(&format!("\n\n{memory_context}"));
+    }
+
+    if let Some(feedback) = feedback_context {
+        user_content.push_str(&format!(
+            "\n\n## Verification Feedback (Fix these violations from your previous attempt):\n{feedback}"
+        ));
+    }
 
     let system_prompt = std::fs::read_to_string("crates/forge-agents/prompts/coder.md")
         .unwrap_or_else(|_| {
@@ -406,31 +812,29 @@ async fn call_coder_via_router(
         multi_file: false,
     };
 
-    let mut routed_request = RoutedCompletionRequest {
+    let routed_request = RoutedCompletionRequest {
         required_tier: router.policy().classify(&task_desc),
         completion_request: completion_request.clone(),
     };
 
     let provider = router
         .route(&routed_request)
-        .or_else(|_| {
-            routed_request.required_tier = ModelTier::Tier1;
-            router.route(&routed_request)
-        })
-        .or_else(|_| {
-            routed_request.required_tier = ModelTier::Tier2;
-            router.route(&routed_request)
-        })
-        .or_else(|_| {
-            routed_request.required_tier = ModelTier::Tier3;
-            router.route(&routed_request)
-        })
+        .await
         .context("no model provider available — check configs/routing.toml")?;
 
-    let response = provider
-        .complete(routed_request.completion_request)
+    let mut stream = provider
+        .complete_stream(routed_request.completion_request)
         .await
         .context("model provider returned an error")?;
 
-    Ok(response.content)
+    let mut accumulated_content = String::new();
+    while let Some(token_result) = stream.next().await {
+        let token = token_result.context("failed to stream token")?;
+        print!("{token}");
+        let _ = std::io::stdout().flush();
+        accumulated_content.push_str(&token);
+    }
+    println!();
+
+    Ok(accumulated_content)
 }

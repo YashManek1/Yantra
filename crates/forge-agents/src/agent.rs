@@ -66,6 +66,10 @@ pub struct AgentContext {
     pub tools: McpRouter,
     /// Session identifier for span recording and archaeology.
     pub session_id: SessionId,
+    /// Results from upstream tasks in the orchestrator DAG.
+    pub upstream_results: Vec<TaskResult>,
+    /// Memory service facade for recall and mistake prevention rules.
+    pub memory: Arc<yantra_memory::MemoryService>,
 }
 
 /// Trait implemented by every specialist agent.

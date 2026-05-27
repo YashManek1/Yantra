@@ -207,6 +207,37 @@ impl FsMcpServer {
             "kind": kind
         }))
     }
+
+    /// Applies a unified diff or creation payload to a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an MCP error for invalid parameters, missing sacred authorization,
+    /// path escapes, or diff application failures.
+    pub fn apply_diff(&self, params: &Value) -> Result<Value, McpError> {
+        let requested_path = required_path(params)?;
+        let diff_content = required_string(params, "diff")?;
+        let _canonical_path = canonicalize_within(&self.project_root, requested_path.as_path())?;
+
+        if is_sacred(&self.project_root, requested_path.as_path())?
+            && !has_sacred_authorization(params)
+        {
+            return Err(McpError::forbidden(
+                "sacred file write requires authorization",
+            ));
+        }
+
+        super::diff_apply::apply_diff_to_file(
+            self.project_root.as_path(),
+            requested_path
+                .to_str()
+                .ok_or_else(|| ToolsError::InvalidParams("invalid path".to_owned()))?,
+            &diff_content,
+        )
+        .map_err(McpError::internal)?;
+
+        Ok(json!({ "ok": true }))
+    }
 }
 
 #[async_trait]
@@ -222,6 +253,7 @@ impl McpServer for FsMcpServer {
             "fs.write_file" => self.write_file(&params),
             "fs.delete_file" => self.delete_file(&params),
             "fs.exists" => self.exists(&params),
+            "fs.apply_diff" => self.apply_diff(&params),
             _ => Err(McpError::method_not_found(method.to_owned())),
         }
     }

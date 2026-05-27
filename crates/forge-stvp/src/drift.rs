@@ -86,14 +86,19 @@ pub struct ParsedDiff {
 }
 
 impl ParsedDiff {
-    /// Extracts modified file paths from a unified diff string.
+    /// Extracts modified file paths from a unified diff string or file creation block.
     pub fn parse(diff_text: &str) -> Vec<String> {
         diff_text
             .lines()
             .filter_map(|line| {
-                PATTERN_DIFF_FILE_HEADER
-                    .captures(line)
-                    .map(|diff_file_capture| diff_file_capture[1].to_owned())
+                if let Some(diff_file_capture) = PATTERN_DIFF_FILE_HEADER.captures(line) {
+                    Some(diff_file_capture[1].to_owned())
+                } else if let Some(stripped) = line.strip_prefix("// File: ") {
+                    Some(stripped.trim().to_owned())
+                } else {
+                    line.strip_prefix("// Create File: ")
+                        .map(|stripped| stripped.trim().to_owned())
+                }
             })
             .collect()
     }

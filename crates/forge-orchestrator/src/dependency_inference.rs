@@ -82,6 +82,7 @@ impl DependencyInferrer {
         let provider = self
             .router
             .route(&routed_request)
+            .await
             .map_err(|router_error| OrchestratorError::Router(router_error.to_string()))?;
         let response = provider
             .complete(completion_request)

@@ -112,19 +112,76 @@ impl GitMcpServer {
     pub fn commit(&self, params: &Value) -> Result<Value, McpError> {
         self.ensure_repository()?;
         let message = required_string(params, "message")?;
-        let files = params
-            .get("files")
-            .and_then(Value::as_array)
-            .ok_or_else(|| ToolsError::InvalidParams("missing array field `files`".to_owned()))?;
 
-        for file_value in files {
-            let file_path = file_value
-                .as_str()
-                .ok_or_else(|| ToolsError::InvalidParams("files must be strings".to_owned()))?;
-            canonicalize_within(&self.project_root, Path::new(file_path))?;
+        if let Some(files) = params.get("files").and_then(Value::as_array) {
+            for file_value in files {
+                let file_path = file_value
+                    .as_str()
+                    .ok_or_else(|| ToolsError::InvalidParams("files must be strings".to_owned()))?;
+                canonicalize_within(&self.project_root, Path::new(file_path))?;
+            }
         }
 
-        let synthetic_hash = synthetic_commit_hash(&message, self.current_head_hash()?.as_deref());
+        let old_hash = self.current_head_hash()?.unwrap_or_else(zero_hash);
+        let synthetic_hash = synthetic_commit_hash(&message, Some(&old_hash));
+
+        let log_path = self.git_dir().join("logs").join("HEAD");
+        if let Some(parent_dir) = log_path.parent() {
+            std::fs::create_dir_all(parent_dir).map_err(|source| ToolsError::Io {
+                path: parent_dir.to_path_buf(),
+                source,
+            })?;
+        }
+        let timestamp = Utc::now().timestamp();
+        let log_line = format!(
+            "{} {} Yantra {} +0000\tcommit: {}\n",
+            old_hash,
+            synthetic_hash,
+            timestamp,
+            message.replace('\n', " ")
+        );
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .and_then(|mut file| {
+                use std::io::Write;
+                file.write_all(log_line.as_bytes())
+            })
+            .map_err(|source| ToolsError::Io {
+                path: log_path,
+                source,
+            })?;
+
+        let current_branch = self.current_branch()?;
+        if current_branch == "detached" {
+            let head_path = self.git_dir().join("HEAD");
+            std::fs::write(&head_path, format!("{synthetic_hash}\n")).map_err(|source| {
+                ToolsError::Io {
+                    path: head_path,
+                    source,
+                }
+            })?;
+        } else {
+            let branch_path = self
+                .git_dir()
+                .join("refs")
+                .join("heads")
+                .join(&current_branch);
+            if let Some(parent_dir) = branch_path.parent() {
+                std::fs::create_dir_all(parent_dir).map_err(|source| ToolsError::Io {
+                    path: parent_dir.to_path_buf(),
+                    source,
+                })?;
+            }
+            std::fs::write(&branch_path, format!("{synthetic_hash}\n")).map_err(|source| {
+                ToolsError::Io {
+                    path: branch_path,
+                    source,
+                }
+            })?;
+        }
+
         Ok(json!({ "hash": synthetic_hash }))
     }
 

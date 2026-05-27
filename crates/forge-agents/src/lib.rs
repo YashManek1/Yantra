@@ -23,15 +23,17 @@ pub mod agent;
 pub mod coder;
 pub mod committer;
 pub mod error;
+pub mod red_team;
 pub mod refactorer;
 pub mod researcher;
 pub mod tester;
 pub mod verifier_agent;
 
 pub use agent::{Agent, AgentContext, Diff, FileDiff, TaskResult};
-pub use coder::CoderAgent;
+pub use coder::{parse_diffs_from_response, CoderAgent};
 pub use committer::{CommitMessage, CommitSigningKey, CommitterAgent};
 pub use error::AgentError;
+pub use red_team::RedTeamAgent;
 pub use refactorer::RefactorerAgent;
 pub use researcher::{parse_research_memo, ResearchFinding, ResearchMemo, ResearcherAgent};
 pub use tester::{run_and_report_test_failures, TesterAgent};

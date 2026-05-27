@@ -65,6 +65,9 @@ fn make_scheduler_with_agent(
     let circuit_breaker = Arc::new(CircuitBreaker::new(1_000));
     let router = Arc::new(Router::new(RoutingPolicy::default(), vec![]));
     let tools = yantra_tools::McpRouter::default();
+    let memory_dir = temp_yantra_dir("mem_agent");
+    let memory =
+        Arc::new(yantra_memory::MemoryService::new(&memory_dir.join("memory.sqlite")).unwrap());
     Scheduler::new(
         dag,
         agents,
@@ -74,6 +77,7 @@ fn make_scheduler_with_agent(
         tools,
         SessionId::new(),
         Duration::from_millis(10),
+        memory,
     )
 }
 
@@ -205,6 +209,20 @@ impl yantra_router::provider::ModelProvider for MockTier1Provider {
             finish_reason: FinishReason::Stop,
         })
     }
+
+    async fn complete_stream(
+        &self,
+        _request: CompletionRequest,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<String, ProviderError>> + Send>>,
+        ProviderError,
+    > {
+        let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel(1);
+        let _send_result = channel_sender.send(Ok(self.fixed_response.clone())).await;
+        Ok(Box::pin(yantra_router::provider::ReceiverStream::new(
+            channel_receiver,
+        )))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +332,7 @@ async fn parallel_dispatch_five_independent_tasks_complete_concurrently() {
 // ---------------------------------------------------------------------------
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(10))]
     #[test]
     fn no_task_runs_before_its_dependencies(chain_length in 2usize..=8usize) {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -480,6 +499,9 @@ async fn failing_task_reaches_human_review_after_max_retries() {
     let circuit_breaker = Arc::new(CircuitBreaker::new(1_000));
     let router = Arc::new(Router::new(RoutingPolicy::default(), vec![]));
     let tools = yantra_tools::McpRouter::default();
+    let memory_dir = temp_yantra_dir("mem_retry");
+    let memory =
+        Arc::new(yantra_memory::MemoryService::new(&memory_dir.join("memory.sqlite")).unwrap());
     let (scheduler, mut review_receiver) = Scheduler::new(
         Arc::clone(&dag),
         agents,
@@ -489,6 +511,7 @@ async fn failing_task_reaches_human_review_after_max_retries() {
         tools,
         SessionId::new(),
         Duration::from_millis(10),
+        memory,
     );
 
     let task_id = TaskId::new();

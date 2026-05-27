@@ -23,8 +23,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use yantra_agents::{
-    Agent, AgentContext, AgentError, CoderAgent, CommitSigningKey, CommitterAgent,
-    RefactorerAgent, ResearcherAgent, TesterAgent, VerifierAgent,
+    Agent, AgentContext, AgentError, CoderAgent, CommitSigningKey, CommitterAgent, Diff, FileDiff,
+    RedTeamAgent, RefactorerAgent, ResearcherAgent, TaskResult, TesterAgent, VerifierAgent,
 };
 use yantra_core::{
     ModelCapability, ModelTier, Outcome, SessionId, Strictness, TaskClass, TaskId, TaskNode,
@@ -126,6 +126,20 @@ impl ModelProvider for MockProvider {
             finish_reason: FinishReason::Stop,
         })
     }
+
+    async fn complete_stream(
+        &self,
+        _request: CompletionRequest,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<String, ProviderError>> + Send>>,
+        ProviderError,
+    > {
+        let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel(1);
+        let _send_result = channel_sender.send(Ok(self.response_content.clone())).await;
+        Ok(Box::pin(yantra_router::provider::ReceiverStream::new(
+            channel_receiver,
+        )))
+    }
 }
 
 fn make_mock_router(response_content: impl Into<String>) -> Arc<Router> {
@@ -161,10 +175,16 @@ fn make_crg_mcp_router() -> McpRouter {
 }
 
 fn make_agent_context(response_content: impl Into<String>) -> AgentContext {
+    let temp_dir = std::env::temp_dir().join(format!("yantra-integration-test-{}", TaskId::new()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory =
+        Arc::new(yantra_memory::MemoryService::new(&temp_dir.join("memory.sqlite")).unwrap());
     AgentContext {
         router: make_mock_router(response_content),
         tools: make_crg_mcp_router(),
         session_id: SessionId::new(),
+        upstream_results: Vec::new(),
+        memory,
     }
 }
 
@@ -180,9 +200,16 @@ fn make_truth_token(task_id: TaskId, task_class: TaskClass) -> TruthToken {
 
 fn make_task(task_class: TaskClass, description: &str) -> TaskNode {
     let task_id = TaskId::new();
+    let temp_directory = std::env::temp_dir().join(format!("yantra-empty-{task_id}"));
+    let _create_result = std::fs::create_dir_all(&temp_directory);
+    let description_with_root = format!(
+        "project_root:{} {}",
+        temp_directory.to_string_lossy(),
+        description
+    );
     TaskNode {
         id: task_id,
-        description: description.to_owned(),
+        description: description_with_root,
         status: TaskStatus::Pending,
         class: task_class,
         dependencies: Vec::new(),
@@ -208,10 +235,16 @@ async fn researcher_returns_success_with_memo_json_in_summary() {
         server_name: "search",
     }));
 
+    let temp_dir = std::env::temp_dir().join(format!("yantra-integration-test-{}", TaskId::new()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory =
+        Arc::new(yantra_memory::MemoryService::new(&temp_dir.join("memory.sqlite")).unwrap());
     let context = AgentContext {
         router: make_mock_router(memo_response),
         tools: mcp_router,
         session_id: SessionId::new(),
+        upstream_results: Vec::new(),
+        memory,
     };
 
     let task = make_task(TaskClass::NewFeature, "add JWT rotation to auth service");
@@ -417,10 +450,16 @@ async fn committer_produces_signed_commit_with_git_mcp_server() {
         response_value: git_response,
     }));
 
+    let temp_dir = std::env::temp_dir().join(format!("yantra-integration-test-{}", TaskId::new()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory =
+        Arc::new(yantra_memory::MemoryService::new(&temp_dir.join("memory.sqlite")).unwrap());
     let context = AgentContext {
         router: make_mock_router(""),
         tools: mcp_router,
         session_id: SessionId::new(),
+        upstream_results: Vec::new(),
+        memory,
     };
 
     let signing_key = CommitSigningKey::generate().expect("key generation succeeds");
@@ -444,10 +483,16 @@ async fn committer_produces_signed_commit_with_git_mcp_server() {
 async fn committer_succeeds_even_when_git_mcp_is_unavailable() {
     let mcp_router = McpRouter::new([]);
 
+    let temp_dir = std::env::temp_dir().join(format!("yantra-integration-test-{}", TaskId::new()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory =
+        Arc::new(yantra_memory::MemoryService::new(&temp_dir.join("memory.sqlite")).unwrap());
     let context = AgentContext {
         router: make_mock_router(""),
         tools: mcp_router,
         session_id: SessionId::new(),
+        upstream_results: Vec::new(),
+        memory,
     };
 
     let signing_key = CommitSigningKey::generate().expect("key generation succeeds");
@@ -493,9 +538,16 @@ fn make_chained_task(
     description: &str,
     truth_token: TruthToken,
 ) -> TaskNode {
+    let temp_directory = std::env::temp_dir().join(format!("yantra-empty-{task_id}"));
+    let _create_result = std::fs::create_dir_all(&temp_directory);
+    let description_with_root = format!(
+        "project_root:{} {}",
+        temp_directory.to_string_lossy(),
+        description
+    );
     TaskNode {
         id: task_id,
-        description: description.to_owned(),
+        description: description_with_root,
         status: TaskStatus::Pending,
         class: task_class,
         dependencies: Vec::new(),
@@ -518,10 +570,17 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         CONFIDENCE: 0.85\n\
         FINDING: sign_jwt is in src/auth/token.rs | confidence: 0.9 | source: kg";
 
+    let temp_dir = std::env::temp_dir().join(format!("yantra-integration-test-{}", TaskId::new()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory =
+        Arc::new(yantra_memory::MemoryService::new(&temp_dir.join("memory.sqlite")).unwrap());
+
     let researcher_context = AgentContext {
         router: make_mock_router(researcher_response),
         tools: McpRouter::new([]),
         session_id,
+        upstream_results: Vec::new(),
+        memory: Arc::clone(&memory),
     };
     let researcher_task =
         make_chained_task(task_id, task_class, "add JWT rotation", truth_token.clone());
@@ -542,12 +601,14 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         +pub fn rotate_jwt(old_token: &str) -> String {\n\
         +    format!(\"new-{old_token}\")\n\
         +}\n\
-         pub fn sign_jwt() {}";
+        + pub fn sign_jwt() {}";
 
     let coder_context = AgentContext {
         router: make_mock_router(coder_response),
         tools: make_crg_mcp_router(),
         session_id,
+        upstream_results: vec![researcher_result.clone()],
+        memory: Arc::clone(&memory),
     };
     let coder_task =
         make_chained_task(task_id, task_class, "add JWT rotation", truth_token.clone());
@@ -556,7 +617,10 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         .await
         .expect("coder must succeed");
     assert_eq!(coder_result.outcome, Outcome::Success);
-    let coder_diff = coder_result.diff.expect("coder must produce a diff");
+    let coder_diff = coder_result
+        .diff
+        .as_ref()
+        .expect("coder must produce a diff");
     assert_eq!(coder_diff.files[0].file_path, "src/auth/token.rs");
 
     // --- Step 3: Tester ---
@@ -574,6 +638,8 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         router: make_mock_router(tester_response),
         tools: make_crg_mcp_router(),
         session_id,
+        upstream_results: vec![coder_result.clone()],
+        memory: Arc::clone(&memory),
     };
     let tester_task = make_chained_task(
         task_id,
@@ -596,6 +662,8 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         router: make_mock_router(verifier_response),
         tools: McpRouter::new([]),
         session_id,
+        upstream_results: vec![tester_result.clone()],
+        memory: Arc::clone(&memory),
     };
     let verifier_task = make_chained_task(
         task_id,
@@ -623,6 +691,8 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         router: make_mock_router(""),
         tools: commit_mcp_router,
         session_id,
+        upstream_results: vec![verifier_result.clone()],
+        memory: Arc::clone(&memory),
     };
     let signing_key = CommitSigningKey::generate().expect("key generation succeeds");
     let committer_task = make_chained_task(
@@ -641,4 +711,36 @@ async fn acceptance_chained_agent_flow_researcher_to_committer() {
         committer_result.summary.contains(commit_hash),
         "final commit summary must include the commit hash"
     );
+}
+
+#[tokio::test]
+async fn red_team_agent_verdict_pass_outcome() {
+    use yantra_core::DecisionId;
+    let mock_response =
+        "VERDICT: PASS\nREASON: The changes look clean and have no major security concerns.";
+    let context = make_agent_context(mock_response);
+
+    let task = make_task(TaskClass::NewFeature, "add jwt rotation");
+    let coder_result = TaskResult {
+        task_id: task.id,
+        outcome: Outcome::Success,
+        diff: Some(Diff {
+            files: vec![FileDiff {
+                file_path: "src/main.rs".to_owned(),
+                unified_diff: "+++ src/main.rs\n+fn main() {}\n".to_owned(),
+            }],
+        }),
+        summary: "wrote main".to_owned(),
+        decision_id: DecisionId::new(),
+    };
+
+    let mut context_with_upstream = context;
+    context_with_upstream.upstream_results.push(coder_result);
+
+    let result = RedTeamAgent::new()
+        .run(task, context_with_upstream)
+        .await
+        .unwrap();
+    assert_eq!(result.outcome, Outcome::Success);
+    assert!(result.summary.contains("passed\":true"));
 }

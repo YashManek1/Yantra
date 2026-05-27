@@ -212,6 +212,7 @@ impl Agent for TesterAgent {
         let model_provider = context
             .router
             .route(&routed_request)
+            .await
             .map_err(|router_error| AgentError::ModelProvider(router_error.to_string()))?;
 
         let completion_response = model_provider

@@ -42,6 +42,15 @@ pub trait ModelProvider: Send + Sync {
         &self,
         request: CompletionRequest,
     ) -> Result<CompletionResponse, ProviderError>;
+
+    /// Executes one chat completion request and streams the response.
+    async fn complete_stream(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<String, ProviderError>> + Send>>,
+        ProviderError,
+    >;
 }
 
 /// Current provider availability.
@@ -150,4 +159,27 @@ pub enum FinishReason {
     ToolCalls,
     /// Provider returned another reason.
     Other(String),
+}
+
+/// Helper struct that implements `futures_core::Stream` for a `tokio::sync::mpsc::Receiver`.
+pub struct ReceiverStream<T> {
+    receiver: tokio::sync::mpsc::Receiver<T>,
+}
+
+impl<T> ReceiverStream<T> {
+    /// Creates a new `ReceiverStream` wrapping the given receiver.
+    pub fn new(receiver: tokio::sync::mpsc::Receiver<T>) -> Self {
+        Self { receiver }
+    }
+}
+
+impl<T> futures_core::Stream for ReceiverStream<T> {
+    type Item = T;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.receiver.poll_recv(cx)
+    }
 }

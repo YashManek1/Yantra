@@ -154,13 +154,41 @@ impl Router {
     /// # Errors
     ///
     /// Returns `RouterError::NoProvider` when no provider for the tier exists.
-    pub fn route(&self, request: &RoutedCompletionRequest) -> RouterResult<&dyn ModelProvider> {
-        self.providers
-            .iter()
-            .find(|provider| provider.tier() == request.required_tier)
-            .map(AsRef::as_ref)
-            .map(|provider| provider as &dyn ModelProvider)
-            .ok_or(RouterError::NoProvider(request.required_tier))
+    pub async fn route(
+        &self,
+        request: &RoutedCompletionRequest,
+    ) -> RouterResult<&dyn ModelProvider> {
+        let requested_tier = request.required_tier;
+        let tiers_to_try = match requested_tier {
+            ModelTier::Tier0 => vec![
+                ModelTier::Tier0,
+                ModelTier::Tier1,
+                ModelTier::Tier2,
+                ModelTier::Tier3,
+            ],
+            ModelTier::Tier1 => vec![ModelTier::Tier1, ModelTier::Tier2, ModelTier::Tier3],
+            ModelTier::Tier2 => vec![ModelTier::Tier2, ModelTier::Tier3],
+            ModelTier::Tier3 => vec![ModelTier::Tier3],
+        };
+
+        for &tier in &tiers_to_try {
+            for provider in &self.providers {
+                if provider.tier() == tier {
+                    let provider_status = provider.status().await;
+                    if matches!(provider_status, crate::provider::ProviderStatus::Available) {
+                        return Ok(provider.as_ref());
+                    }
+                }
+            }
+        }
+
+        for provider in &self.providers {
+            if provider.tier() == requested_tier {
+                return Ok(provider.as_ref());
+            }
+        }
+
+        Err(RouterError::NoProvider(requested_tier))
     }
 
     /// Selects a provider for a task by first classifying the task.
@@ -169,7 +197,7 @@ impl Router {
     ///
     /// Returns `RouterError::NoProvider` when no provider for the classified
     /// tier exists.
-    pub fn route_task(
+    pub async fn route_task(
         &self,
         task: &TaskDescription,
         completion_request: CompletionRequest,
@@ -179,6 +207,7 @@ impl Router {
             required_tier,
             completion_request,
         })
+        .await
     }
 
     /// Returns cloned provider handles for background health polling.

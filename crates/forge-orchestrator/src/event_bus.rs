@@ -55,6 +55,10 @@ pub enum AgentMessage {
         task_id: TaskId,
         /// Decision produced by the agent execution.
         decision_id: DecisionId,
+        /// Agent kind dispatched to execute it.
+        agent_kind: AgentKind,
+        /// One-line summary of what was done.
+        summary: String,
     },
     /// A task execution failed (non-final — may be retried).
     TaskFailed {
@@ -153,18 +157,47 @@ impl EventBus {
 }
 
 fn message_to_decision_record(message: &AgentMessage, session_id: SessionId) -> DecisionRecord {
-    let (action_type, reasoning) = describe_message(message);
-    DecisionRecord {
-        id: DecisionId::new(),
-        timestamp: Utc::now(),
-        session_id,
-        parent_decision_id: None,
-        action_type,
-        reasoning,
-        alternatives_considered: vec![],
-        truth_token: None,
-        git_hash: None,
-        agent: AgentKind::IntegrityChecker,
+    if let AgentMessage::TaskCompleted {
+        decision_id,
+        agent_kind,
+        summary,
+        ..
+    } = message
+    {
+        let parsed_git_hash = if summary.starts_with("commit ") {
+            summary
+                .split_whitespace()
+                .nth(1)
+                .map(|s| s.trim_end_matches(':').to_owned())
+        } else {
+            None
+        };
+        DecisionRecord {
+            id: *decision_id,
+            timestamp: Utc::now(),
+            session_id,
+            parent_decision_id: None,
+            action_type: "task_completed".to_owned(),
+            reasoning: summary.clone(),
+            alternatives_considered: vec![],
+            truth_token: None,
+            git_hash: parsed_git_hash,
+            agent: *agent_kind,
+        }
+    } else {
+        let (action_type, reasoning) = describe_message(message);
+        DecisionRecord {
+            id: DecisionId::new(),
+            timestamp: Utc::now(),
+            session_id,
+            parent_decision_id: None,
+            action_type,
+            reasoning,
+            alternatives_considered: vec![],
+            truth_token: None,
+            git_hash: None,
+            agent: AgentKind::IntegrityChecker,
+        }
     }
 }
 
@@ -184,6 +217,8 @@ fn describe_message(message: &AgentMessage) -> (String, String) {
         AgentMessage::TaskCompleted {
             task_id,
             decision_id,
+            agent_kind: _,
+            summary: _,
         } => (
             "task_completed".to_owned(),
             format!("task {task_id} completed; decision {decision_id}"),

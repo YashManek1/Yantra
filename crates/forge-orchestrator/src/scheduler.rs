@@ -51,6 +51,8 @@ struct SchedulerInner {
     retry_counts: Mutex<HashMap<TaskId, u32>>,
     human_review_sender: mpsc::UnboundedSender<TaskId>,
     poll_interval: Duration,
+    memory: Arc<yantra_memory::MemoryService>,
+    task_results: Mutex<HashMap<TaskId, TaskResult>>,
 }
 
 /// Background DAG scheduler.
@@ -78,6 +80,7 @@ impl Scheduler {
         tools: McpRouter,
         session_id: SessionId,
         poll_interval: Duration,
+        memory: Arc<yantra_memory::MemoryService>,
     ) -> (Self, mpsc::UnboundedReceiver<TaskId>) {
         let (human_review_sender, human_review_receiver) = mpsc::unbounded_channel();
         let scheduler = Self {
@@ -93,6 +96,8 @@ impl Scheduler {
                 retry_counts: Mutex::new(HashMap::new()),
                 human_review_sender,
                 poll_interval,
+                memory,
+                task_results: Mutex::new(HashMap::new()),
             }),
         };
         (scheduler, human_review_receiver)
@@ -144,6 +149,56 @@ impl Scheduler {
                 poll_and_dispatch(Arc::clone(&inner)).await;
             }
         })
+    }
+
+    /// Runs the task DAG to completion, returning all task results.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError::TaskFailedPermanent` if any task fails permanently.
+    pub async fn run_to_completion(&self) -> Result<Vec<TaskResult>, OrchestratorError> {
+        let mut event_receiver = self.inner.event_bus.subscribe();
+        let background_poll_handle = self.spawn();
+
+        let expected_task_ids: std::collections::HashSet<TaskId> =
+            self.inner.task_store.lock().keys().copied().collect();
+
+        let mut completed_task_ids = std::collections::HashSet::new();
+
+        while completed_task_ids.len() < expected_task_ids.len() {
+            match event_receiver.recv().await {
+                Ok(AgentMessage::TaskCompleted { task_id, .. }) => {
+                    completed_task_ids.insert(task_id);
+                }
+                Ok(AgentMessage::TaskMaxRetries { task_id }) => {
+                    background_poll_handle.abort();
+                    return Err(OrchestratorError::TaskFailedPermanent {
+                        task_id: task_id.to_string(),
+                    });
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    background_poll_handle.abort();
+                    return Err(OrchestratorError::Database(
+                        "event bus closed unexpectedly".to_owned(),
+                    ));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    // Ignore lag events and continue listening to the broadcast channel.
+                }
+            }
+        }
+
+        background_poll_handle.abort();
+
+        let results_map = self.inner.task_results.lock();
+        let mut execution_results = Vec::new();
+        for task_id in expected_task_ids {
+            if let Some(task_result) = results_map.get(&task_id).cloned() {
+                execution_results.push(task_result);
+            }
+        }
+        Ok(execution_results)
     }
 }
 
@@ -204,10 +259,30 @@ async fn poll_and_dispatch(inner: Arc<SchedulerInner>) {
 
         inner.circuit_breaker.record_call();
 
+        let upstream_ids = match inner.dag.dependencies_of(task_id) {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::error!(?e, %task_id, "failed to query task dependencies");
+                let _ = inner.dag.mark_failed(task_id);
+                continue;
+            }
+        };
+        let mut upstream_results = Vec::new();
+        {
+            let results_map = inner.task_results.lock();
+            for upstream_id in upstream_ids {
+                if let Some(result) = results_map.get(&upstream_id).cloned() {
+                    upstream_results.push(result);
+                }
+            }
+        }
+
         let agent_context = AgentContext {
             router: Arc::clone(&inner.router),
             tools: inner.tools.clone(),
             session_id: inner.session_id,
+            upstream_results,
+            memory: Arc::clone(&inner.memory),
         };
 
         let _ = inner.event_bus.publish(AgentMessage::TaskStarted {
@@ -218,7 +293,7 @@ async fn poll_and_dispatch(inner: Arc<SchedulerInner>) {
         let inner_clone = Arc::clone(&inner);
         tokio::spawn(async move {
             let run_result = agent.run(task_node, agent_context).await;
-            apply_dispatch_result(run_result, task_id, &inner_clone).await;
+            apply_dispatch_result(run_result, task_id, agent_kind, &inner_clone).await;
         });
     }
 }
@@ -226,6 +301,7 @@ async fn poll_and_dispatch(inner: Arc<SchedulerInner>) {
 async fn apply_dispatch_result(
     run_result: Result<TaskResult, yantra_agents::AgentError>,
     task_id: TaskId,
+    agent_kind: AgentKind,
     inner: &SchedulerInner,
 ) {
     match run_result {
@@ -235,9 +311,15 @@ async fn apply_dispatch_result(
                 tracing::error!(?dag_error, %task_id, "mark_complete failed");
             }
             inner.retry_counts.lock().remove(&task_id);
+            inner
+                .task_results
+                .lock()
+                .insert(task_id, task_result.clone());
             let _ = inner.event_bus.publish(AgentMessage::TaskCompleted {
                 task_id,
                 decision_id: task_result.decision_id,
+                agent_kind,
+                summary: task_result.summary.clone(),
             });
         }
         Ok(task_result) => {
