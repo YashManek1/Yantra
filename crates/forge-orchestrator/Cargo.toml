@@ -14,6 +14,7 @@ yantra-stvp.workspace    = true
 yantra-obs.workspace     = true
 yantra-router.workspace  = true
 yantra-tools.workspace   = true
+yantra-memory.workspace  = true
 thiserror.workspace      = true
 tracing.workspace        = true
 tokio.workspace          = true
@@ -22,6 +23,7 @@ serde.workspace          = true
 serde_json.workspace     = true
 chrono.workspace         = true
 parking_lot.workspace    = true
+futures-core.workspace   = true
 
 [dev-dependencies]
 yantra-core.workspace   = true

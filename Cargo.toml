@@ -68,13 +68,15 @@ chrono             = { version = "0.4",  features = ["serde"] }
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3",  features = ["env-filter", "json"] }
 rusqlite           = { version = "0.31", features = ["bundled", "uuid", "chrono"] }
-reqwest            = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest            = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 clap               = { version = "4",    features = ["derive"] }
 proptest           = "1"
 ring               = "0.17"
 parking_lot        = "0.12"
 regex              = "1"
 async-trait        = "0.1"
+futures-core       = "0.3"
+futures-util       = "0.3"
 gix                = { version = "0.78", default-features = false }
 tree-sitter        = "0.25"
 tree-sitter-rust   = "0.24"

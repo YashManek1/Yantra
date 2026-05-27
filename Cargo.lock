@@ -4864,6 +4864,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures-core",
  "regex",
  "ring",
  "rusqlite",
@@ -4906,6 +4907,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
+ "futures-core",
+ "futures-util",
  "inquire",
  "regex",
  "rusqlite",
@@ -4915,10 +4918,13 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "yantra-agents",
  "yantra-ast",
  "yantra-core",
  "yantra-crg",
+ "yantra-lsp",
+ "yantra-memory",
  "yantra-night",
  "yantra-obs",
  "yantra-orchestrator",
@@ -4926,6 +4932,8 @@ dependencies = [
  "yantra-serve",
  "yantra-stvp",
  "yantra-tokenizer",
+ "yantra-tools",
+ "yantra-verifier",
 ]
 
 [[package]]
@@ -5048,6 +5056,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures-core",
  "parking_lot",
  "proptest",
  "rusqlite",
@@ -5058,6 +5067,7 @@ dependencies = [
  "tracing",
  "yantra-agents",
  "yantra-core",
+ "yantra-memory",
  "yantra-obs",
  "yantra-router",
  "yantra-stvp",
@@ -5070,6 +5080,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures-core",
+ "futures-util",
  "reqwest",
  "serde",
  "serde_json",

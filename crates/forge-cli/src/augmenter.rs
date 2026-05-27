@@ -91,17 +91,12 @@ impl AugmenterPort for CliQuestionAugmenter {
                 stop_sequences: Vec::new(),
             };
 
-            let mut routed_request = RoutedCompletionRequest {
+            let routed_request = RoutedCompletionRequest {
                 required_tier: ModelTier::Tier0,
                 completion_request,
             };
 
-            let provider_result = router.route(&routed_request).or_else(|_| {
-                routed_request.required_tier = ModelTier::Tier1;
-                router.route(&routed_request)
-            });
-
-            let provider = match provider_result {
+            let provider = match router.route(&routed_request).await {
                 Ok(p) => p,
                 Err(_) => return Vec::new(),
             };

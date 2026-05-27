@@ -22,12 +22,14 @@ mod augmenter;
 mod commands;
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
+use futures_util::StreamExt;
 use serde::Deserialize;
 use yantra_core::{
     AgentKind, ModelCapability, ModelTier, Outcome, ProjectRoot, SessionId, Span, SpanId, TaskId,
@@ -144,6 +146,16 @@ impl ModelProvider for ConfiguredTierProvider {
         request: CompletionRequest,
     ) -> Result<CompletionResponse, ProviderError> {
         self.inner.complete(request).await
+    }
+
+    async fn complete_stream(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<String, ProviderError>> + Send>>,
+        ProviderError,
+    > {
+        self.inner.complete_stream(request).await
     }
 }
 
@@ -394,32 +406,28 @@ async fn main() -> anyhow::Result<()> {
                 tools: None,
                 stop_sequences: Vec::new(),
             };
-            let mut routed_request = RoutedCompletionRequest {
+            let routed_request = RoutedCompletionRequest {
                 required_tier: ModelTier::Tier0,
                 completion_request,
             };
 
-            let provider = router
-                .route(&routed_request)
-                .or_else(|_| {
-                    routed_request.required_tier = ModelTier::Tier1;
-                    router.route(&routed_request)
-                })
-                .or_else(|_| {
-                    routed_request.required_tier = ModelTier::Tier2;
-                    router.route(&routed_request)
-                })
-                .or_else(|_| {
-                    routed_request.required_tier = ModelTier::Tier3;
-                    router.route(&routed_request)
-                })?;
+            let provider = router.route(&routed_request).await?;
 
             let start_instant = std::time::Instant::now();
-            let completion_response = provider.complete(routed_request.completion_request).await?;
+            let mut stream = provider
+                .complete_stream(routed_request.completion_request.clone())
+                .await?;
+            let mut accumulated_content = String::new();
+            while let Some(token_result) = stream.next().await {
+                let token = token_result?;
+                print!("{token}");
+                let _ = std::io::stdout().flush();
+                accumulated_content.push_str(&token);
+            }
+            println!();
+
             let duration_milliseconds =
                 u64::try_from(start_instant.elapsed().as_millis()).unwrap_or(u64::MAX);
-
-            println!("{}", completion_response.content);
 
             if let (Some(subgraph_payload), Some(global_graph_cache)) =
                 (&rendered_subgraph_option, &graph_cache_option)
@@ -427,7 +435,7 @@ async fn main() -> anyhow::Result<()> {
                 let unverified_symbols = ask_verifier::SymbolAllowlistVerifier::verify(
                     subgraph_payload,
                     global_graph_cache,
-                    &completion_response.content,
+                    &accumulated_content,
                 );
                 if !unverified_symbols.is_empty() {
                     println!("\n\x1b[33m⚠ Grounding Warning — the following symbols/paths could not be verified\x1b[0m");
@@ -440,10 +448,16 @@ async fn main() -> anyhow::Result<()> {
 
             let cost_per_thousand_input = provider.capability().cost_per_1k_in;
             let cost_per_thousand_output = provider.capability().cost_per_1k_out;
-            let input_cost = (completion_response.tokens_in as f64 / 1000.0)
-                * f64::from(cost_per_thousand_input);
-            let output_cost = (completion_response.tokens_out as f64 / 1000.0)
-                * f64::from(cost_per_thousand_output);
+            let tokens_in = (routed_request
+                .completion_request
+                .messages
+                .iter()
+                .map(|msg| msg.content.len())
+                .sum::<usize>()
+                / 4) as u64;
+            let tokens_out = (accumulated_content.len() / 4) as u64;
+            let input_cost = (tokens_in as f64 / 1000.0) * f64::from(cost_per_thousand_input);
+            let output_cost = (tokens_out as f64 / 1000.0) * f64::from(cost_per_thousand_output);
             let total_call_cost = input_cost + output_cost;
 
             println!("Cost: ${total_call_cost:.6}");
@@ -463,8 +477,8 @@ async fn main() -> anyhow::Result<()> {
                 truth_token: None,
                 agent: Some(AgentKind::Coder),
                 model: yantra_core::ModelId::new(provider.id()).ok(),
-                tokens_in: completion_response.tokens_in,
-                tokens_out: completion_response.tokens_out,
+                tokens_in,
+                tokens_out,
                 cost_usd: total_call_cost,
                 duration_ms: duration_milliseconds,
                 started_at: chrono::Utc::now(),

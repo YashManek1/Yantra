@@ -89,6 +89,21 @@ impl TaskDag {
         Ok(Self { pool })
     }
 
+    /// Clears all tasks and dependencies from the database.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError::Database` on SQLite execution failure.
+    pub fn clear(&self) -> Result<(), OrchestratorError> {
+        let db = self
+            .pool
+            .lock()
+            .map_err(|_| OrchestratorError::Database("dag mutex poisoned".to_owned()))?;
+        db.execute("DELETE FROM task_dependencies", [])?;
+        db.execute("DELETE FROM tasks", [])?;
+        Ok(())
+    }
+
     /// Inserts a task into the DAG with `Pending` status.
     ///
     /// `truth_token_sig` is the hex-encoded Ed25519 signature of the task's
@@ -176,6 +191,29 @@ impl TaskDag {
             ready_task_ids.push(parsed_id);
         }
         Ok(ready_task_ids)
+    }
+
+    /// Returns the list of task IDs that `task_id` depends on.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError::Database` on SQLite failure.
+    pub fn dependencies_of(&self, task_id: TaskId) -> Result<Vec<TaskId>, OrchestratorError> {
+        let db = self
+            .pool
+            .lock()
+            .map_err(|_| OrchestratorError::Database("dag mutex poisoned".to_owned()))?;
+        let mut statement =
+            db.prepare("SELECT depends_on FROM task_dependencies WHERE task_id = ?1")?;
+        let rows =
+            statement.query_map(params![task_id.to_string()], |row| row.get::<_, String>(0))?;
+        let mut dependencies = Vec::new();
+        for row in rows {
+            let parsed_id = TaskId::from_str(&row?)
+                .map_err(|core_error| OrchestratorError::Database(core_error.to_string()))?;
+            dependencies.push(parsed_id);
+        }
+        Ok(dependencies)
     }
 
     /// Atomically transitions a task from `pending` to `running`.

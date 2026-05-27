@@ -15,6 +15,7 @@
 //! - `forge-tools::mcp` — shared routing and transport layer
 
 pub mod crg;
+pub mod diff_apply;
 pub mod fs;
 pub mod git;
 pub mod lsp;

@@ -154,7 +154,11 @@ impl CommitterAgent {
 pub fn extract_commit_subject(task_description: &str) -> String {
     task_description
         .lines()
-        .find(|line| !line.trim().is_empty()).map_or_else(|| "chore: automated commit".to_owned(), |line| line.trim().to_owned())
+        .find(|line| !line.trim().is_empty())
+        .map_or_else(
+            || "chore: automated commit".to_owned(),
+            |line| line.trim().to_owned(),
+        )
 }
 
 /// Extracts up to three meaningful lines from `task_description` as the commit body.

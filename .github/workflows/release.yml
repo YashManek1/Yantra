@@ -35,20 +35,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Rust stable toolchain
-        run: |
-          if ! command -v rustup &>/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --no-modify-path
-            export PATH="$HOME/.cargo/bin:$PATH"
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          fi
-          rustup update stable --no-self-update
-          rustup default stable
-          rustup target add ${{ matrix.target }}
-        shell: bash
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Install cross-compilation linker (Linux aarch64 only)
         if: matrix.linker != ''
@@ -63,15 +55,9 @@ jobs:
         shell: bash
 
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+          key: ${{ matrix.target }}
 
       - name: Build release binaries
         if: ${{ !env.ACT }}

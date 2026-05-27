@@ -113,6 +113,13 @@ pub enum OrchestratorError {
     /// The task dependency graph contains a cycle.
     #[error("cyclic dependency detected in task graph")]
     CyclicDependency,
+
+    /// A task failed permanently (exhausted retries).
+    #[error("task {task_id} failed permanently")]
+    TaskFailedPermanent {
+        /// String representation of the failed task identifier.
+        task_id: String,
+    },
 }
 
 impl From<rusqlite::Error> for OrchestratorError {

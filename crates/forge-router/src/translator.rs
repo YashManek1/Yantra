@@ -194,27 +194,55 @@ impl PromptTranslator {
 }
 
 fn message_to_openai(message: &Message) -> Value {
-    json!({
+    let mut content = message.content.clone();
+    let mut tool_call_id = None;
+    if message.role == MessageRole::Tool && content.starts_with("__tool_call_id__:") {
+        if let Some((id_part, content_part)) = content.split_once('\n') {
+            tool_call_id = Some(id_part["__tool_call_id__:".len()..].to_string());
+            content = content_part.to_string();
+        }
+    }
+    let mut message_value = json!({
         "role": role_to_openai(message.role),
-        "content": message.content,
+        "content": content,
         "tool_calls": if message.tool_calls.is_empty() {
             None
         } else {
             Some(message.tool_calls.iter().map(tool_call_to_openai).collect::<Vec<_>>())
         },
-    })
+    });
+    if let Some(extracted_id) = tool_call_id {
+        if let Some(message_object) = message_value.as_object_mut() {
+            message_object.insert("tool_call_id".to_string(), Value::String(extracted_id));
+        }
+    }
+    message_value
 }
 
 fn message_to_ollama(message: &Message) -> Value {
-    json!({
+    let mut content = message.content.clone();
+    let mut tool_call_id = None;
+    if message.role == MessageRole::Tool && content.starts_with("__tool_call_id__:") {
+        if let Some((id_part, content_part)) = content.split_once('\n') {
+            tool_call_id = Some(id_part["__tool_call_id__:".len()..].to_string());
+            content = content_part.to_string();
+        }
+    }
+    let mut message_value = json!({
         "role": role_to_openai(message.role),
-        "content": message.content,
+        "content": content,
         "tool_calls": if message.tool_calls.is_empty() {
             None
         } else {
             Some(message.tool_calls.iter().map(tool_call_to_openai).collect::<Vec<_>>())
         },
-    })
+    });
+    if let Some(extracted_id) = tool_call_id {
+        if let Some(message_object) = message_value.as_object_mut() {
+            message_object.insert("tool_call_id".to_string(), Value::String(extracted_id));
+        }
+    }
+    message_value
 }
 
 fn tool_to_openai(tool_spec: &ToolSpec) -> Value {

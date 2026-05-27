@@ -327,8 +327,8 @@ async fn openrouter_status_parses_rate_limit_header() {
     ));
 }
 
-#[test]
-fn router_selects_provider_for_required_tier() {
+#[tokio::test]
+async fn router_selects_provider_for_required_tier() {
     let provider: Arc<dyn ModelProvider> = Arc::new(OllamaProvider::new("qwen2.5-coder:7b"));
     let router = Router::new(RoutingPolicy::default(), vec![provider]);
     let task = TaskDescription {
@@ -340,7 +340,7 @@ fn router_selects_provider_for_required_tier() {
         multi_file: false,
     };
 
-    let selected_provider = router.route_task(&task, sample_request()).unwrap();
+    let selected_provider = router.route_task(&task, sample_request()).await.unwrap();
 
     assert_eq!(selected_provider.tier(), ModelTier::Tier0);
 }

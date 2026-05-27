@@ -203,8 +203,10 @@ pub fn parse_research_memo(
                 .parse::<f32>()
                 .unwrap_or(0.5)
                 .clamp(0.0, 1.0);
-            let source_tool = finding_captures
-                .get(3).map_or_else(|| "unknown".to_owned(), |capture| capture.as_str().to_owned());
+            let source_tool = finding_captures.get(3).map_or_else(
+                || "unknown".to_owned(),
+                |capture| capture.as_str().to_owned(),
+            );
             let source_url = finding_captures
                 .get(4)
                 .map(|capture| capture.as_str().to_owned());
@@ -301,6 +303,7 @@ impl Agent for ResearcherAgent {
         let model_provider = context
             .router
             .route(&routed_request)
+            .await
             .map_err(|router_error| AgentError::ModelProvider(router_error.to_string()))?;
 
         let completion_response = model_provider

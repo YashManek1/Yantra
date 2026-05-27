@@ -145,6 +145,20 @@ impl ModelProvider for MockProvider {
             finish_reason: FinishReason::Stop,
         })
     }
+
+    async fn complete_stream(
+        &self,
+        _request: CompletionRequest,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<String, ProviderError>> + Send>>,
+        ProviderError,
+    > {
+        let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel(1);
+        let _send_result = channel_sender.send(Ok(self.response_content.clone())).await;
+        Ok(Box::pin(yantra_router::provider::ReceiverStream::new(
+            channel_receiver,
+        )))
+    }
 }
 
 fn build_agent_context(
@@ -170,10 +184,16 @@ fn build_context_from_mcp(mcp_router: McpRouter, mock_response: String) -> Agent
         response_content: mock_response,
     });
     let router = Router::new(RoutingPolicy::default(), vec![mock_provider]);
+    let temp_dir = std::env::temp_dir().join(format!("yantra-coder-test-{}", TaskId::new()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory =
+        Arc::new(yantra_memory::MemoryService::new(&temp_dir.join("memory.sqlite")).unwrap());
     AgentContext {
         router: Arc::new(router),
         tools: mcp_router,
         session_id: SessionId::new(),
+        upstream_results: Vec::new(),
+        memory,
     }
 }
 
