@@ -1,0 +1,27 @@
+[[questions]]
+id = "what_to_refactor"
+text = "What exactly are you refactoring? Name the module, function, or pattern."
+answer_kind = "text"
+required = true
+help_text = "Be specific. 'clean up the codebase' is not acceptable."
+
+[[questions]]
+id = "why_refactor"
+text = "Why is this refactor needed? What problem does the current code have?"
+answer_kind = "text"
+required = true
+help_text = "E.g. duplication, performance, readability, correctness."
+
+[[questions]]
+id = "affected_files"
+text = "Which files will change?"
+answer_kind = "text"
+required = true
+help_text = "Comma-separated list."
+
+[[questions]]
+id = "success_criteria"
+text = "How will you verify the refactor is correct? All existing tests must still pass."
+answer_kind = "text"
+required = true
+help_text = "List any additional verification steps beyond test suite."

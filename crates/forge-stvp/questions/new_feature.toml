@@ -1,0 +1,34 @@
+[[questions]]
+id = "what_is_it"
+text = "What is this feature? Describe it in one sentence."
+answer_kind = "text"
+required = true
+help_text = "Be specific — vague answers like 'improve it' will be rejected by V1."
+
+[[questions]]
+id = "why_is_it_needed"
+text = "Why is this feature needed? What problem does it solve?"
+answer_kind = "text"
+required = true
+help_text = "Reference the user story, bug report, or business requirement."
+
+[[questions]]
+id = "affected_files"
+text = "Which files or modules will this feature touch?"
+answer_kind = "text"
+required = true
+help_text = "Comma-separated. E.g. 'src/auth/token.rs, src/api/login.rs'"
+
+[[questions]]
+id = "out_of_scope"
+text = "What is explicitly out of scope for this task?"
+answer_kind = "text"
+required = true
+help_text = "Name anything you intentionally will NOT change."
+
+[[questions]]
+id = "success_criteria"
+text = "How will you know this feature is complete? List at least 2 testable criteria."
+answer_kind = "text"
+required = true
+help_text = "Each criterion must be testable. E.g. 'returns 200 on valid input', 'rejects null token with 401'."

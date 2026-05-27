@@ -1,0 +1,28 @@
+[vague_terms]
+# Phrases that make a success criterion untestable
+patterns = [
+    "better", "improve", "enhance", "optimize", "nicer",
+    "cleaner", "more efficient", "good", "faster", "various",
+    "some", "a bit", "somewhat", "properly", "correctly"
+]
+
+[testable_verbs]
+# Verbs that indicate a testable criterion
+patterns = [
+    "returns", "produces", "displays", "creates", "updates",
+    "deletes", "rejects", "accepts", "stores", "retrieves",
+    "emits", "writes", "reads", "throws", "fails with",
+    "succeeds when", "passes", "validates"
+]
+
+[dependency_manifests]
+# Files whose modification requires sacred-file escalation
+files = [
+    "Cargo.toml", "Cargo.lock",
+    "package.json", "package-lock.json", "yarn.lock",
+    "requirements.txt", "pyproject.toml", "setup.py",
+    "go.mod", "go.sum",
+    "pom.xml", "build.gradle",
+    "Gemfile", "Gemfile.lock",
+    "composer.json"
+]

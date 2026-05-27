@@ -23,6 +23,8 @@ use crate::source_truth::SourceTruth;
 use crate::validation::{ProjectContext, ValidationViolation, Validator, ViolationSeverity};
 
 static PATTERN_ADD_DEPENDENCY: LazyLock<Regex> = LazyLock::new(|| {
+    // SAFETY: This regex pattern is validated at compile time. If it fails, the
+    // binary is fundamentally broken and cannot run correctly.
     Regex::new(
         r"(?i)\b(add(ing)?|instal(l(ing)?)?|import(ing)?|includ(e|ing)?|bring(ing)?|introduc(e|ing)?)\b.{0,60}\b(dep(endency|endencies)?|library|libraries|crate|package|mod(ule)?)\b",
     )
@@ -134,6 +136,7 @@ mod tests {
                 .iter()
                 .map(|&(key, value)| (key.to_string(), value.to_string()))
                 .collect::<BTreeMap<_, _>>(),
+            augmented_question_ids: Vec::new(),
         }
     }
 
@@ -157,6 +160,7 @@ mod tests {
             answers: [("new_deps_allowed".to_owned(), "no".to_owned())]
                 .into_iter()
                 .collect(),
+            augmented_question_ids: Vec::new(),
         };
         let context = temp_context();
         let violations = InternalConsistencyValidator.validate(&source_truth, &context);

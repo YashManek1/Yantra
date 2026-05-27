@@ -1,0 +1,27 @@
+[[questions]]
+id = "what_to_integrate"
+text = "What two systems or components are being integrated?"
+answer_kind = "text"
+required = true
+help_text = "E.g. 'forge-crg and forge-lsp via a shared graph event bus'."
+
+[[questions]]
+id = "integration_point"
+text = "Where is the integration point? Which file/trait/interface connects them?"
+answer_kind = "text"
+required = true
+help_text = "Name the specific code location."
+
+[[questions]]
+id = "affected_files"
+text = "Which files will change?"
+answer_kind = "text"
+required = true
+help_text = "Comma-separated list."
+
+[[questions]]
+id = "success_criteria"
+text = "How will you verify the integration works end-to-end?"
+answer_kind = "text"
+required = true
+help_text = "Describe an integration test or end-to-end flow."

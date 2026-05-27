@@ -37,6 +37,12 @@ CREATE INDEX IF NOT EXISTS idx_shards_type ON memory_shards(shard_type);
 /// Number of float dimensions in the packed embedding vector.
 const EMBEDDING_DIMS: usize = 64;
 
+/// FNV-1a 64-bit offset basis constant.
+const FNV_OFFSET_BASIS: u64 = 14_695_981_039_346_656_037;
+
+/// FNV-1a 64-bit prime constant.
+const FNV_PRIME: u64 = 1_099_511_628_211;
+
 /// Category of a stored memory shard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShardType {
@@ -65,7 +71,14 @@ impl ShardType {
             "code_chunk" => Self::CodeChunk,
             "research_memo" => Self::ResearchMemo,
             "skill" => Self::Skill,
-            _ => Self::SessionSummary,
+            "session_summary" => Self::SessionSummary,
+            _ => {
+                tracing::warn!(
+                    "unknown shard type '{}' in database; treating as SessionSummary",
+                    value
+                );
+                Self::SessionSummary
+            }
         }
     }
 }
@@ -141,12 +154,12 @@ impl ArchivalStore {
         Ok(())
     }
 
-    /// Returns the `k` shards most similar to `query` by cosine similarity.
+    /// Returns the `top_k_count` shards most similar to `query` by cosine similarity.
     ///
     /// # Errors
     ///
-    /// Returns `MemoryError` on database read failure.
-    pub fn search(&self, query: &str, k: usize) -> MemoryResult<Vec<MemoryShard>> {
+    /// Returns `MemoryError` on database read failure or corrupt embedding data.
+    pub fn search(&self, query: &str, top_k_count: usize) -> MemoryResult<Vec<MemoryShard>> {
         let query_embedding = compute_embedding(query);
 
         let database_guard = self
@@ -179,7 +192,7 @@ impl ArchivalStore {
 
                 let similarity_score = embedding_blob
                     .as_deref()
-                    .and_then(unpack_embedding)
+                    .and_then(|blob| unpack_embedding(blob).ok())
                     .map_or(0.0_f32, |stored_embedding| {
                         cosine_similarity(&query_embedding, &stored_embedding)
                     });
@@ -203,7 +216,7 @@ impl ArchivalStore {
 
         Ok(scored_shards
             .into_iter()
-            .take(k)
+            .take(top_k_count)
             .map(|(_, shard)| shard)
             .collect())
     }
@@ -239,8 +252,8 @@ fn compute_embedding(text: &str) -> [f32; EMBEDDING_DIMS] {
 fn simple_hash(chars: &[char]) -> usize {
     chars
         .iter()
-        .fold(14_695_981_039_346_656_037_usize, |hash, character| {
-            hash.wrapping_mul(1_099_511_628_211)
+        .fold(FNV_OFFSET_BASIS as usize, |hash, character| {
+            hash.wrapping_mul(FNV_PRIME as usize)
                 .wrapping_add(*character as usize)
         })
 }
@@ -269,20 +282,26 @@ fn pack_embedding(vector: &[f32; EMBEDDING_DIMS]) -> Vec<u8> {
         .collect()
 }
 
-fn unpack_embedding(blob: &[u8]) -> Option<[f32; EMBEDDING_DIMS]> {
+fn unpack_embedding(blob: &[u8]) -> MemoryResult<[f32; EMBEDDING_DIMS]> {
     if blob.len() != EMBEDDING_DIMS * 4 {
-        return None;
+        return Err(MemoryError::CorruptData(format!(
+            "embedding blob has length {} but expected {}",
+            blob.len(),
+            EMBEDDING_DIMS * 4
+        )));
     }
-    let mut result = [0.0_f32; EMBEDDING_DIMS];
-    for (float_index, float_value) in result.iter_mut().enumerate() {
+    let mut unpacked_floats = [0.0_f32; EMBEDDING_DIMS];
+    for (float_index, float_value) in unpacked_floats.iter_mut().enumerate() {
         let byte_offset = float_index * 4;
-        *float_value = f32::from_le_bytes(
-            blob[byte_offset..byte_offset + 4]
-                .try_into()
-                .expect("slice is exactly 4 bytes"),
-        );
+        let chunk = &blob[byte_offset..byte_offset + 4];
+        let bytes: [u8; 4] = chunk.try_into().map_err(|_| {
+            // This cannot happen because we validated the slice length above.
+            // If it does, the DB is corrupt.
+            MemoryError::CorruptData("embedding chunk has wrong length".to_string())
+        })?;
+        *float_value = f32::from_le_bytes(bytes);
     }
-    Some(result)
+    Ok(unpacked_floats)
 }
 
 #[cfg(test)]

@@ -21,7 +21,9 @@ yantra-agents.workspace       = true
 yantra-router.workspace       = true
 yantra-ast.workspace          = true
 yantra-crg.workspace          = true
+yantra-tokenizer.workspace    = true
 yantra-obs.workspace          = true
+async-trait.workspace         = true
 clap.workspace                = true
 serde.workspace               = true
 toml.workspace               = true
@@ -33,6 +35,7 @@ rusqlite.workspace            = true
 chrono.workspace              = true
 serde_json.workspace          = true
 inquire.workspace             = true
+regex.workspace               = true
 
 [lints]
 workspace = true

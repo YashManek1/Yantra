@@ -17,6 +17,8 @@
 //! - `forge-night` — starts Night Mode on `yantra night`
 //! - `forge-serve` — optionally launched for the Live Canvas UI
 
+mod ask_verifier;
+mod augmenter;
 mod commands;
 
 use std::fs;
@@ -24,14 +26,18 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
-use yantra_core::{AgentKind, ModelTier, Outcome, ProjectRoot, SessionId, Span, SpanId, TaskId};
+use yantra_core::{
+    AgentKind, ModelCapability, ModelTier, Outcome, ProjectRoot, SessionId, Span, SpanId, TaskId,
+};
 use yantra_obs::{init_tracing, record_span, CostThresholds, TracingConfig};
 use yantra_router::routing::RoutedCompletionRequest;
 use yantra_router::{
-    CompletionRequest, GitHubModelsProvider, Message, MessageRole, ModelProvider, OllamaProvider,
-    OpenRouterProvider, Router, RoutingPolicy,
+    CompletionRequest, CompletionResponse, GitHubModelsProvider, Message, MessageRole,
+    ModelProvider, OllamaProvider, OpenRouterProvider, ProviderError, ProviderStatus, Router,
+    RoutingPolicy,
 };
 
 #[derive(Debug, Deserialize)]
@@ -100,36 +106,93 @@ enum Commands {
     Version,
 }
 
+struct ConfiguredTierProvider {
+    inner: Arc<dyn ModelProvider>,
+    tier: ModelTier,
+}
+
+impl std::fmt::Debug for ConfiguredTierProvider {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConfiguredTierProvider")
+            .field("id", &self.inner.id())
+            .field("tier", &self.tier)
+            .finish()
+    }
+}
+
+#[async_trait]
+impl ModelProvider for ConfiguredTierProvider {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    fn tier(&self) -> ModelTier {
+        self.tier
+    }
+
+    fn capability(&self) -> ModelCapability {
+        self.inner.capability()
+    }
+
+    async fn status(&self) -> ProviderStatus {
+        self.inner.status().await
+    }
+
+    async fn complete(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<CompletionResponse, ProviderError> {
+        self.inner.complete(request).await
+    }
+}
+
 fn add_providers_from_config(
     config_entries: &[ProviderConfigEntry],
     model_providers: &mut Vec<Arc<dyn ModelProvider>>,
+    tier: ModelTier,
 ) {
     for config_entry in config_entries {
-        if config_entry.kind == "ollama" {
+        let provider: Arc<dyn ModelProvider> = if config_entry.kind == "ollama" {
             let endpoint = config_entry
                 .base_url
                 .as_deref()
                 .unwrap_or("http://localhost:11434");
-            let provider = OllamaProvider::with_endpoint(&config_entry.default_model, endpoint);
-            model_providers.push(Arc::new(provider));
+            Arc::new(OllamaProvider::with_endpoint(
+                &config_entry.default_model,
+                endpoint,
+            ))
         } else if config_entry.kind == "openrouter" {
             let endpoint = config_entry
                 .base_url
                 .as_deref()
                 .unwrap_or("https://openrouter.ai/api/v1/chat/completions");
             let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
-            let provider = OpenRouterProvider::new(api_key, &config_entry.default_model, endpoint);
-            model_providers.push(Arc::new(provider));
+            Arc::new(OpenRouterProvider::new(
+                api_key,
+                &config_entry.default_model,
+                endpoint,
+            ))
         } else if config_entry.kind == "github_models" {
             let endpoint = config_entry
                 .base_url
                 .as_deref()
                 .unwrap_or("https://models.inference.ai.azure.com/chat/completions");
             let api_key = std::env::var("GITHUB_TOKEN").unwrap_or_default();
-            let provider =
-                GitHubModelsProvider::new(api_key, &config_entry.default_model, endpoint);
-            model_providers.push(Arc::new(provider));
-        }
+            Arc::new(GitHubModelsProvider::new(
+                api_key,
+                &config_entry.default_model,
+                endpoint,
+            ))
+        } else {
+            continue;
+        };
+
+        let tiered_provider = ConfiguredTierProvider {
+            inner: provider,
+            tier,
+        };
+        model_providers.push(Arc::new(tiered_provider));
     }
 }
 
@@ -177,12 +240,28 @@ async fn main() -> anyhow::Result<()> {
 
     // 3. Construct Providers and Router
     let mut model_providers: Vec<Arc<dyn ModelProvider>> = Vec::new();
-    add_providers_from_config(&routing_config.providers.tier0, &mut model_providers);
-    add_providers_from_config(&routing_config.providers.tier1, &mut model_providers);
-    add_providers_from_config(&routing_config.providers.tier2, &mut model_providers);
-    add_providers_from_config(&routing_config.providers.tier3, &mut model_providers);
+    add_providers_from_config(
+        &routing_config.providers.tier0,
+        &mut model_providers,
+        ModelTier::Tier0,
+    );
+    add_providers_from_config(
+        &routing_config.providers.tier1,
+        &mut model_providers,
+        ModelTier::Tier1,
+    );
+    add_providers_from_config(
+        &routing_config.providers.tier2,
+        &mut model_providers,
+        ModelTier::Tier2,
+    );
+    add_providers_from_config(
+        &routing_config.providers.tier3,
+        &mut model_providers,
+        ModelTier::Tier3,
+    );
 
-    let routing_policy = RoutingPolicy::default();
+    let routing_policy = RoutingPolicy::from_file(config_file_path).unwrap_or_default();
     let router = Router::new(routing_policy, model_providers);
 
     match cli_arguments.command {
@@ -231,23 +310,25 @@ async fn main() -> anyhow::Result<()> {
                 .join(".yantra")
                 .join("crg_cache.json");
             let mut subgraph_text = String::new();
+            let mut rendered_subgraph_option = None;
+            let mut graph_cache_option = None;
 
             if crg_database_path.exists() {
                 if let Ok(database_connection) = rusqlite::Connection::open(&crg_database_path) {
                     let _ = yantra_crg::schema::create_crg_schema(&database_connection);
 
-                    let mut graph_cache_option = None;
+                    let mut graph_cache_option_local = None;
                     if crg_cache_path.exists() {
                         if let Ok(cache_text) = fs::read_to_string(&crg_cache_path) {
                             if let Ok(deserialized_graph_cache) =
                                 serde_json::from_str::<yantra_crg::GraphCache>(&cache_text)
                             {
-                                graph_cache_option = Some(deserialized_graph_cache);
+                                graph_cache_option_local = Some(deserialized_graph_cache);
                             }
                         }
                     }
 
-                    let graph_cache = if let Some(cached_graph) = graph_cache_option {
+                    let graph_cache = if let Some(cached_graph) = graph_cache_option_local {
                         cached_graph
                     } else {
                         let newly_built_graph =
@@ -267,7 +348,9 @@ async fn main() -> anyhow::Result<()> {
                         8192,
                         &[],
                     )?;
-                    subgraph_text = rendered_subgraph.text;
+                    subgraph_text.clone_from(&rendered_subgraph.text);
+                    rendered_subgraph_option = Some(rendered_subgraph);
+                    graph_cache_option = Some(graph_cache);
                 }
             }
 
@@ -277,8 +360,8 @@ async fn main() -> anyhow::Result<()> {
                 println!("## Extracted CRG Subgraph:\n{subgraph_text}\n");
             }
 
-            let system_prompt = fs::read_to_string("crates/forge-agents/prompts/coder.md")
-                .unwrap_or_else(|_| "You write code in the dialect of the local repo. Use only symbols visible in the provided code-review subgraph.".to_string());
+            let system_prompt = fs::read_to_string("crates/forge-agents/prompts/ask.md")
+                .unwrap_or_else(|_| "You are the Ask agent inside Yantra, an honest and precise architectural navigator.".to_string());
 
             let code_context_section = if subgraph_text.is_empty() {
                 "No CRG index available for this repository.".to_string()
@@ -287,25 +370,8 @@ async fn main() -> anyhow::Result<()> {
             };
 
             let user_content = format!(
-                "## Source Truth\nTask ID: ask\nClass: Docstring\nStrictness: Trust\n\n\
-                 ## Code Context (CRG Subgraph)\n{code_context_section}\n\n\
-                 ## Task\n{question}\n\n\
-                 ## Instructions\n\
-                 CRITICAL CONSTRAINT: You MUST only cite file paths and symbol names that are \
-                 explicitly listed verbatim in the CRG Subgraph block above. \
-                 Do NOT invent, guess, or hallucinate any file paths, struct names, function \
-                 names, or module paths that do not appear in the subgraph.\n\
-                 1. Identify the PRIMARY ARCHITECTURAL INSERTION POINT from the subgraph: the \
-                 struct, trait, or impl block where the new code belongs. \
-                 High-connectivity [SEED] symbols are strong candidates. \
-                 Low-hop [hop:1] symbols adjacent to seeds indicate the call flow.\n\
-                 2. Trace the connection/flow from seed symbols to the insertion point using \
-                 only the edges listed at the bottom of the subgraph (X -calls→ Y).\n\
-                 3. State your answer with the exact file path and symbol name as shown in the \
-                 subgraph. If the exact insertion point is not present in the subgraph, identify \
-                 the closest visible parent module or related struct and suggest where the new \
-                 code should reside relative to that visible structure, marking your answer clearly \
-                 as \"Context-Inferred\". Do not completely refuse if related structural seeds are present."
+                "## Code Context (CRG Subgraph)\n{code_context_section}\n\n\
+                 ## Question\n{question}"
             );
 
             let messages = vec![
@@ -323,7 +389,7 @@ async fn main() -> anyhow::Result<()> {
 
             let completion_request = CompletionRequest {
                 messages,
-                max_tokens: None,
+                max_tokens: Some(1024),
                 temperature: 0.2,
                 tools: None,
                 stop_sequences: Vec::new(),
@@ -354,6 +420,23 @@ async fn main() -> anyhow::Result<()> {
                 u64::try_from(start_instant.elapsed().as_millis()).unwrap_or(u64::MAX);
 
             println!("{}", completion_response.content);
+
+            if let (Some(subgraph_payload), Some(global_graph_cache)) =
+                (&rendered_subgraph_option, &graph_cache_option)
+            {
+                let unverified_symbols = ask_verifier::SymbolAllowlistVerifier::verify(
+                    subgraph_payload,
+                    global_graph_cache,
+                    &completion_response.content,
+                );
+                if !unverified_symbols.is_empty() {
+                    println!("\n\x1b[33m⚠ Grounding Warning — the following symbols/paths could not be verified\x1b[0m");
+                    println!("\x1b[33m  against the CRG index and may be hallucinated:\x1b[0m");
+                    for unverified_symbol in unverified_symbols {
+                        println!("\x1b[33m    • `{unverified_symbol}`\x1b[0m");
+                    }
+                }
+            }
 
             let cost_per_thousand_input = provider.capability().cost_per_1k_in;
             let cost_per_thousand_output = provider.capability().cost_per_1k_out;

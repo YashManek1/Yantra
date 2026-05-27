@@ -26,6 +26,12 @@ pub const ROLLING_WINDOW_SAMPLES: usize = 120;
 /// Sampling interval for the background detector.
 pub const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Minimum number of historical samples required before anomaly detection runs.
+const MIN_SAMPLES_BEFORE_ANOMALY_DETECTION: usize = 30;
+
+/// Z-score threshold above which a metric is considered anomalous.
+const ANOMALY_Z_SCORE_THRESHOLD: f64 = 3.0;
+
 /// Metric that crossed the anomaly threshold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnomalyMetric {
@@ -84,33 +90,26 @@ impl AnomalyDetector {
     }
 
     /// Runs the detector as a background Tokio task.
+    ///
+    /// The task exits cleanly when `sample_receiver` is closed.
     pub fn spawn(
         mut sample_receiver: mpsc::Receiver<AnomalySample>,
         event_sender: mpsc::Sender<AnomalyEvent>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut detector = Self::new();
-            let mut sample_interval = tokio::time::interval(SAMPLE_INTERVAL);
-            loop {
-                tokio::select! {
-                    received_sample = sample_receiver.recv() => {
-                        match received_sample {
-                            Some(sample) => {
-                                if let Some(anomaly_event) = detector.observe(sample) {
-                                    let _send_result = event_sender.send(anomaly_event).await;
-                                }
-                            }
-                            None => break,
-                        }
+            while let Some(sample) = sample_receiver.recv().await {
+                if let Some(anomaly_event) = detector.observe(sample) {
+                    if event_sender.send(anomaly_event).await.is_err() {
+                        tracing::warn!("anomaly event channel closed; dropping event");
                     }
-                    _ = sample_interval.tick() => {}
                 }
             }
         })
     }
 
     fn detect_against_existing_window(&self, sample: AnomalySample) -> Option<AnomalyEvent> {
-        if self.samples.len() < 30 {
+        if self.samples.len() < MIN_SAMPLES_BEFORE_ANOMALY_DETECTION {
             return None;
         }
 
@@ -148,7 +147,7 @@ impl AnomalyDetector {
                 sample,
             })
         })
-        .find(|event| event.z_score > 3.0)
+        .find(|event| event.z_score > ANOMALY_Z_SCORE_THRESHOLD)
     }
 }
 

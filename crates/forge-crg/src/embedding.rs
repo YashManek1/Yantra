@@ -78,11 +78,12 @@ impl EmbeddingStore {
             [],
         )?;
 
-        let mut select_statement = sqlite_connection.prepare(
+        let mut select_statement = sqlite_connection.prepare_cached(
             "SELECT s.id, s.name, s.docstring, s.kind, s.connectivity_score, f.path
              FROM symbols s
              JOIN files f ON s.file_id = f.id
-             WHERE s.kind != 'file'",
+             LEFT JOIN symbol_embeddings e ON s.id = e.symbol_id
+             WHERE s.kind != 'file' AND e.symbol_id IS NULL",
         )?;
         let symbol_rows = select_statement.query_map([], |row| {
             Ok((
@@ -117,27 +118,42 @@ impl EmbeddingStore {
 
         if !passage_texts.is_empty() {
             let embedding_vectors = self.embedding_model.embed(passage_texts, None)?;
-            let mut insert_statement = sqlite_connection.prepare(
-                "INSERT OR REPLACE INTO symbol_embeddings (symbol_id, vector) VALUES (?1, ?2)",
-            )?;
 
-            let mut in_memory_vectors: Vec<(SymbolId, Vec<f32>)> =
-                Vec::with_capacity(symbol_identifiers.len());
+            let in_tx = !sqlite_connection.is_autocommit();
+            if !in_tx {
+                sqlite_connection.execute("BEGIN TRANSACTION", [])?;
+            }
 
-            for (symbol_identifier_string, embedding_vector) in
-                symbol_identifiers.into_iter().zip(embedding_vectors)
-            {
-                let vector_bytes = vector_to_bytes(&embedding_vector);
-                insert_statement.execute(params![symbol_identifier_string, vector_bytes])?;
-                if let Ok(symbol_identifier) = SymbolId::from_str(&symbol_identifier_string) {
-                    in_memory_vectors.push((symbol_identifier, embedding_vector));
+            let result = (|| -> anyhow::Result<()> {
+                let mut insert_statement = sqlite_connection.prepare_cached(
+                    "INSERT OR REPLACE INTO symbol_embeddings (symbol_id, vector) VALUES (?1, ?2)",
+                )?;
+
+                for (symbol_identifier_string, embedding_vector) in
+                    symbol_identifiers.into_iter().zip(embedding_vectors)
+                {
+                    let vector_bytes = vector_to_bytes(&embedding_vector);
+                    insert_statement.execute(params![symbol_identifier_string, vector_bytes])?;
+                }
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => {
+                    if !in_tx {
+                        sqlite_connection.execute("COMMIT", [])?;
+                    }
+                }
+                Err(error) => {
+                    if !in_tx {
+                        sqlite_connection.execute("ROLLBACK", []).ok();
+                    }
+                    return Err(error);
                 }
             }
-
-            if let Ok(mut cache) = self.vector_cache.lock() {
-                *cache = in_memory_vectors;
-            }
         }
+
+        self.load_vectors_from_db(sqlite_connection)?;
 
         Ok(())
     }

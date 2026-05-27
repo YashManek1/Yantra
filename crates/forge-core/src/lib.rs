@@ -27,9 +27,11 @@ pub mod truth;
 pub use agent::{AgentCapability, AgentKind, AgentSpec};
 pub use db::{apply_migrations, connection_pool, DbPool, MIGRATION_VERSION_TABLE_SQL};
 pub use error::{CoreError, CoreResult};
-pub use id::{DecisionId, SessionId, SpanId, SymbolId, TaskId};
+pub use id::{hex_encode, sha256_hex, DecisionId, SessionId, SpanId, SymbolId, TaskId};
 pub use model::{ModelCapability, ModelId, ModelTier};
-pub use path::{canonicalize_within, is_sacred, ProjectRoot};
+pub use path::{canonicalize_within, is_sacred, load_sacred_patterns, ProjectRoot};
 pub use span::{ErrorRecord, Outcome, Span};
-pub use task::{TaskClass, TaskNode, TaskStatus};
+pub use task::{
+    AugmentFuture, AugmentedQuestionTuple, AugmenterPort, TaskClass, TaskNode, TaskStatus,
+};
 pub use truth::{Strictness, TruthToken, VerifyingKey};

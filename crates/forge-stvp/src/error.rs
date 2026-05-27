@@ -125,6 +125,16 @@ pub enum StvpError {
         reason: String,
     },
 
+    /// Attempted to overwrite an immutable source-truth artifact.
+    ///
+    /// `SOURCE_TRUTH.yaml` artifacts are immutable post-issuance. Generate a
+    /// new `TaskId` instead of reusing an existing one.
+    #[error("immutability violation: a truth artifact for task {task_id} already exists")]
+    ImmutabilityViolation {
+        /// Task whose artifact already exists.
+        task_id: yantra_core::TaskId,
+    },
+
     /// A foundational core operation failed.
     #[error("core error: {0}")]
     Core(#[from] CoreError),

@@ -139,7 +139,8 @@ impl FromStr for SymbolId {
     }
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
+/// Encodes a byte slice as a lowercase hexadecimal string.
+pub fn hex_encode(bytes: &[u8]) -> String {
     const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -147,4 +148,38 @@ fn hex_encode(bytes: &[u8]) -> String {
         encoded.push(HEX_DIGITS[usize::from(byte & 0x0f)] as char);
     }
     encoded
+}
+
+/// Computes the SHA-256 hash of `data` and returns it as a lowercase hex string.
+pub fn sha256_hex(data: &[u8]) -> String {
+    let digest_value = digest::digest(&digest::SHA256, data);
+    hex_encode(digest_value.as_ref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symbol_id_new_rejects_empty_string() {
+        assert!(SymbolId::new("").is_err());
+        assert!(SymbolId::new("   ").is_err());
+    }
+
+    #[test]
+    fn hex_encode_round_trip_known_bytes() {
+        let test_bytes = [0x00_u8, 0x0f, 0xff, 0xab, 0xcd];
+        let encoded = hex_encode(&test_bytes);
+        assert_eq!(encoded, "000fffabcd");
+        assert_eq!(encoded.len(), test_bytes.len() * 2);
+    }
+
+    #[test]
+    fn sha256_hex_produces_correct_length() {
+        let computed_hash = sha256_hex(b"hello world");
+        assert_eq!(computed_hash.len(), 64);
+        assert!(computed_hash
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()));
+    }
 }

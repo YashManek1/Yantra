@@ -1,0 +1,26 @@
+[new_feature]
+keywords = ["add", "implement", "create", "build", "introduce", "support", "new feature", "feature"]
+
+[bug_fix]
+keywords = ["fix", "bug", "error", "crash", "broken", "wrong", "incorrect", "issue", "patch", "regression"]
+
+[refactor]
+keywords = ["refactor", "restructure", "reorganize", "simplify", "clean up", "extract", "rename"]
+
+[migration]
+keywords = ["migrate", "upgrade", "update dependency", "port", "convert", "bump"]
+
+[integration]
+keywords = ["integrate", "connect", "wire", "link", "bridge", "hook up"]
+
+[exploration]
+keywords = ["investigate", "research", "explore", "understand", "analyze", "audit", "spike", "poc"]
+
+[chore]
+keywords = ["chore", "dependency update", "version bump", "update lock", "ci update"]
+
+[docstring]
+keywords = ["document", "docstring", "comment", "doc", "readme", "add docs"]
+
+[style]
+keywords = ["format", "style", "lint", "clippy", "whitespace", "fmt"]

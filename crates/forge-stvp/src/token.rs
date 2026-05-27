@@ -203,6 +203,7 @@ mod tests {
             description: "fix null pointer dereference".to_owned(),
             created_at: Utc::now(),
             answers: BTreeMap::new(),
+            augmented_question_ids: Vec::new(),
         }
     }
 

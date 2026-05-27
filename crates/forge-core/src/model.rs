@@ -86,3 +86,25 @@ pub struct ModelCapability {
     /// Output cost in USD per 1,000 tokens.
     pub cost_per_1k_out: f32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_id_new_rejects_empty_string() {
+        assert!(ModelId::new("").is_err());
+    }
+
+    #[test]
+    fn model_id_new_rejects_whitespace_only_string() {
+        assert!(ModelId::new("   ").is_err());
+        assert!(ModelId::new("\t\n").is_err());
+    }
+
+    #[test]
+    fn model_id_new_accepts_valid_identifier() {
+        let model_id = ModelId::new("ollama/qwen2.5-coder:7b").unwrap();
+        assert_eq!(model_id.as_str(), "ollama/qwen2.5-coder:7b");
+    }
+}

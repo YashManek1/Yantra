@@ -15,12 +15,13 @@
 //! - `forge-core::span` — defines the span data model
 //! - `forge-obs::tracing` — writes span endings through this module
 
-use std::str::FromStr;
-
-use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
-use yantra_core::{ErrorRecord, ModelId, SessionId, Span, TaskId};
+use yantra_core::{hex_encode, ErrorRecord, ModelId, SessionId, Span, TaskId};
 
+use crate::db_util::{
+    deserialize_optional_rusqlite, parse_optional_rusqlite, parse_rusqlite,
+    parse_timestamp_rusqlite, to_rusqlite_error,
+};
 use crate::error::ObsResult;
 
 /// `SQLite` schema for span trace storage.
@@ -45,13 +46,28 @@ CREATE INDEX IF NOT EXISTS idx_spans_session ON spans(session_id);
 CREATE INDEX IF NOT EXISTS idx_spans_task ON spans(task_id);
 CREATE INDEX IF NOT EXISTS idx_spans_started ON spans(started_at);";
 
+/// Applies the traces schema DDL to the given connection.
+///
+/// Uses `CREATE TABLE IF NOT EXISTS` so it is safe to call on an already-
+/// initialized database. Callers should invoke this once during connection
+/// setup rather than on every insert.
+///
+/// # Errors
+///
+/// Returns `ObsError` when schema DDL execution fails.
+pub fn ensure_traces_schema(database: &Connection) -> ObsResult<()> {
+    database
+        .execute_batch(TRACES_SCHEMA_SQL)
+        .map_err(Into::into)
+}
+
 /// Records a span in `SQLite`.
 ///
 /// # Errors
 ///
-/// Returns `ObsError` when schema setup, serialization, or insertion fails.
+/// Returns `ObsError` when serialization or insertion fails.
 pub fn record_span(database: &Connection, span: &Span) -> ObsResult<()> {
-    database.execute_batch(TRACES_SCHEMA_SQL)?;
+    ensure_traces_schema(database)?;
     database.execute(
         "INSERT OR REPLACE INTO spans (
             span_id,
@@ -128,7 +144,7 @@ pub fn query_task_spans(database: &Connection, task_id: TaskId) -> ObsResult<Vec
 }
 
 fn query_spans(database: &Connection, sql: &str, identifier: String) -> ObsResult<Vec<Span>> {
-    database.execute_batch(TRACES_SCHEMA_SQL)?;
+    ensure_traces_schema(database)?;
     let mut statement = database.prepare(sql)?;
     let mapped_rows = statement.query_map([identifier], row_to_span)?;
     let mut spans = Vec::new();
@@ -187,52 +203,4 @@ where
         .map(serde_json::to_string)
         .transpose()
         .map_err(Into::into)
-}
-
-fn deserialize_optional_rusqlite<T>(value: Option<String>) -> rusqlite::Result<Option<T>>
-where
-    T: serde::de::DeserializeOwned,
-{
-    value
-        .map(|serialized_value| serde_json::from_str(&serialized_value).map_err(to_rusqlite_error))
-        .transpose()
-}
-
-fn parse_optional_rusqlite<T>(value: Option<&str>) -> rusqlite::Result<Option<T>>
-where
-    T: FromStr,
-    T::Err: std::error::Error + Send + Sync + 'static,
-{
-    value.map(parse_rusqlite).transpose()
-}
-
-fn parse_rusqlite<T>(value: &str) -> rusqlite::Result<T>
-where
-    T: FromStr,
-    T::Err: std::error::Error + Send + Sync + 'static,
-{
-    value.parse().map_err(to_rusqlite_error)
-}
-
-fn parse_timestamp_rusqlite(value: &str) -> rusqlite::Result<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value)
-        .map(DateTime::<Utc>::from)
-        .map_err(to_rusqlite_error)
-}
-
-fn to_rusqlite_error<E>(error: E) -> rusqlite::Error
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(HEX_DIGITS[usize::from(byte >> 4)] as char);
-        encoded.push(HEX_DIGITS[usize::from(byte & 0x0f)] as char);
-    }
-    encoded
 }

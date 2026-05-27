@@ -32,6 +32,17 @@ pub enum Strictness {
     Trust,
 }
 
+impl Strictness {
+    /// Returns the stable lowercase string representation of the strictness level.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Light => "light",
+            Self::Trust => "trust",
+        }
+    }
+}
+
 /// Public Ed25519 verifying key used for truth-token verification.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VerifyingKey {
@@ -126,11 +137,11 @@ fn canonical_payload(
     strictness: Strictness,
 ) -> String {
     format!(
-        "{}|{:?}|{}|{:?}",
+        "v1|{}|{}|{}|{}",
         task_id,
-        task_class,
+        task_class.as_str(),
         issued_at.timestamp_nanos_opt().unwrap_or_default(),
-        strictness
+        strictness.as_str()
     )
 }
 

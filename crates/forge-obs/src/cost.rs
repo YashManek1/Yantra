@@ -104,5 +104,53 @@ fn token_cost(tokens: u64, cost_per_1k: f32) -> f64 {
 }
 
 fn f64_to_f32(value: f64) -> f32 {
-    value.to_string().parse::<f32>().unwrap_or(f32::MAX)
+    value as f32
+}
+
+#[cfg(test)]
+#[allow(clippy::float_cmp)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f64_to_f32_converts_without_panic() {
+        assert_eq!(f64_to_f32(0.0_f64), 0.0_f32);
+        assert_eq!(f64_to_f32(1.5_f64), 1.5_f32);
+        assert!((f64_to_f32(1.0_f64 / 3.0_f64) - 0.333_333_3_f32).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cost_gauge_record_call_accumulates_cost() {
+        let cost_gauge = CostGauge::new(CostThresholds {
+            soft: 0.10,
+            hard: 0.50,
+            kill: 1.00,
+        });
+        let model_capability = yantra_core::ModelCapability {
+            context_limit: 128_000,
+            supports_tools: true,
+            cost_per_1k_in: 0.001,
+            cost_per_1k_out: 0.002,
+        };
+        let total_cost = cost_gauge.record_call(1_000, 1_000, &model_capability);
+        assert!(total_cost > 0.0);
+    }
+
+    #[test]
+    fn cost_gauge_check_threshold_transitions() {
+        let cost_gauge = CostGauge::new(CostThresholds {
+            soft: 0.001,
+            hard: 0.002,
+            kill: 0.003,
+        });
+        assert_eq!(cost_gauge.check_threshold(), CostStatus::Ok);
+        let model_capability = yantra_core::ModelCapability {
+            context_limit: 128_000,
+            supports_tools: true,
+            cost_per_1k_in: 1.0,
+            cost_per_1k_out: 1.0,
+        };
+        cost_gauge.record_call(1_000, 0, &model_capability);
+        assert_ne!(cost_gauge.check_threshold(), CostStatus::Ok);
+    }
 }

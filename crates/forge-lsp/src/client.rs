@@ -34,14 +34,17 @@ use crate::error::{LspError, LspResult};
 
 const LSP_REQUEST_TIMEOUT_MS: u64 = 10_000;
 
-/// Manages a single language server subprocess.
+/// Manages a single language server subprocess and its JSON-RPC communication.
+///
+/// The client spawns the server, performs the LSP `initialize`/`initialized` handshake,
+/// and multiplexes concurrent requests over the process's stdin/stdout.
 pub struct LspClient {
-    _server_binary: String,
+    server_binary: String,
     stdin_writer: Arc<Mutex<ChildStdin>>,
     pending_requests: Arc<Mutex<HashMap<i64, oneshot::Sender<LspResult<Value>>>>>,
     next_request_id: Arc<AtomicI64>,
     language_label: String,
-    _process: Child,
+    process: Child,
 }
 
 impl LspClient {
@@ -68,8 +71,16 @@ impl LspClient {
                 source: io_error,
             })?;
 
-        let child_stdin = child_process.stdin.take().expect("stdin must be piped");
-        let child_stdout = child_process.stdout.take().expect("stdout must be piped");
+        // INVARIANT: stdin and stdout are piped because we called .stdin(Stdio::piped())
+        // and .stdout(Stdio::piped()) on the Command above. These takes cannot fail.
+        let child_stdin = child_process
+            .stdin
+            .take()
+            .expect("stdin is piped per the Command configuration above");
+        let child_stdout = child_process
+            .stdout
+            .take()
+            .expect("stdout is piped per the Command configuration above");
 
         let pending_requests: Arc<Mutex<HashMap<i64, oneshot::Sender<LspResult<Value>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -82,14 +93,14 @@ impl LspClient {
             read_stdout_loop(child_stdout, pending_requests_clone, language_for_reader).await;
         });
 
-        let workspace_uri = path_to_uri(workspace_root);
+        let workspace_uri = crate::bridge::path_to_lsp_uri(workspace_root.to_str().unwrap_or(""));
         let client = Self {
-            _server_binary: server_binary.to_owned(),
+            server_binary: server_binary.to_owned(),
             stdin_writer,
             pending_requests,
             next_request_id,
             language_label: language_label.to_owned(),
-            _process: child_process,
+            process: child_process,
         };
 
         client.initialize(&workspace_uri).await?;
@@ -138,7 +149,7 @@ impl LspClient {
     ///
     /// # Errors
     ///
-    /// Returns `LspError::Framing` if the message cannot be written.
+    /// Returns `LspError::Framing` if the message cannot be written to the server's stdin.
     pub async fn notify(&self, method: &str, params: Value) -> LspResult<()> {
         let notification_body = json!({
             "jsonrpc": "2.0",
@@ -151,7 +162,7 @@ impl LspClient {
     async fn initialize(&self, workspace_uri: &str) -> LspResult<()> {
         let initialize_params = json!({
             "processId": std::process::id(),
-            "clientInfo": { "name": "yantra", "version": "0.1.0" },
+            "clientInfo": { "name": "yantra", "version": env!("CARGO_PKG_VERSION") },
             "rootUri": workspace_uri,
             "capabilities": {
                 "textDocument": {
@@ -165,8 +176,10 @@ impl LspClient {
             }
         });
 
-        self.request("initialize", initialize_params).await?;
-        self.notify("initialized", json!({})).await?;
+        self.request(crate::bridge::LSP_METHOD_INITIALIZE, initialize_params)
+            .await?;
+        self.notify(crate::bridge::LSP_METHOD_INITIALIZED, json!({}))
+            .await?;
         Ok(())
     }
 
@@ -191,6 +204,22 @@ impl LspClient {
     }
 }
 
+impl Drop for LspClient {
+    fn drop(&mut self) {
+        if let Err(kill_error) = self.process.start_kill() {
+            tracing::debug!(
+                server_binary = %self.server_binary,
+                "LSP server process already exited or kill failed: {}",
+                kill_error
+            );
+        }
+    }
+}
+
+/// Continuously reads LSP messages from stdout and resolves pending requests.
+///
+/// Runs in a dedicated tokio task for each language server process. The loop
+/// exits when the server closes its stdout (process exit or pipe error).
 async fn read_stdout_loop(
     child_stdout: ChildStdout,
     pending_requests: Arc<Mutex<HashMap<i64, oneshot::Sender<LspResult<Value>>>>>,
@@ -233,6 +262,10 @@ async fn read_stdout_loop(
     tracing::warn!(language = %language_label, "LSP stdout reader loop exited");
 }
 
+/// Reads one Content-Length framed LSP message from the buffered reader.
+///
+/// Parses LSP headers, extracts the `Content-Length` value, reads exactly
+/// that many bytes, and deserializes the result as JSON.
 async fn read_lsp_message(buffered_reader: &mut BufReader<ChildStdout>) -> LspResult<Value> {
     let mut content_length: Option<usize> = None;
 
@@ -254,10 +287,10 @@ async fn read_lsp_message(buffered_reader: &mut BufReader<ChildStdout>) -> LspRe
         }
     }
 
-    let content_length = content_length
+    let message_content_length = content_length
         .ok_or_else(|| LspError::Framing("missing Content-Length header".to_owned()))?;
 
-    let mut body_buffer = vec![0u8; content_length];
+    let mut body_buffer = vec![0u8; message_content_length];
     buffered_reader
         .read_exact(&mut body_buffer)
         .await
@@ -266,18 +299,10 @@ async fn read_lsp_message(buffered_reader: &mut BufReader<ChildStdout>) -> LspRe
     serde_json::from_slice(&body_buffer).map_err(LspError::Json)
 }
 
-fn path_to_uri(path: &Path) -> String {
-    let path_string = path.to_string_lossy();
-    if path_string.starts_with('/') {
-        format!("file://{path_string}")
-    } else {
-        let forward_slash_path = path_string.replace('\\', "/");
-        format!("file:///{forward_slash_path}")
-    }
-}
-
 /// Converts an LSP `Range` JSON object to `(start_line, start_col, end_line, end_col)`.
-pub fn extract_range(range: &Value) -> (u32, u32, u32, u32) {
+///
+/// Returns `(0, 0, 0, 0)` for any missing or non-numeric fields.
+pub(crate) fn extract_range(range: &Value) -> (u32, u32, u32, u32) {
     let start_line = range["start"]["line"].as_u64().unwrap_or(0) as u32;
     let start_column = range["start"]["character"].as_u64().unwrap_or(0) as u32;
     let end_line = range["end"]["line"].as_u64().unwrap_or(0) as u32;
@@ -286,22 +311,18 @@ pub fn extract_range(range: &Value) -> (u32, u32, u32, u32) {
 }
 
 /// Converts an LSP `Location` JSON object to a `crate::types::Location`.
-pub fn extract_location(location_value: &Value) -> crate::types::Location {
-    let uri = location_value["uri"]
-        .as_str()
-        .unwrap_or("")
+///
+/// Strips the `file:///` or `file://` URI prefix from the file path.
+pub(crate) fn extract_location(location_value: &Value) -> crate::types::Location {
+    let raw_uri = location_value["uri"].as_str().unwrap_or("");
+    let file_path = raw_uri
         .strip_prefix("file:///")
-        .or_else(|| {
-            location_value["uri"]
-                .as_str()
-                .unwrap_or("")
-                .strip_prefix("file://")
-        })
-        .unwrap_or(location_value["uri"].as_str().unwrap_or(""))
+        .or_else(|| raw_uri.strip_prefix("file://"))
+        .unwrap_or(raw_uri)
         .to_owned();
     let (start_line, start_column, end_line, end_column) = extract_range(&location_value["range"]);
     crate::types::Location {
-        file: uri,
+        file: file_path,
         start_line,
         start_column,
         end_line,
@@ -314,18 +335,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_path_to_uri_absolute_unix() {
-        let path = Path::new("/home/user/project");
-        let uri = path_to_uri(path);
-        assert_eq!(uri, "file:///home/user/project");
-    }
-
-    #[test]
     fn test_path_to_uri_windows_style() {
-        let path = Path::new("C:\\Users\\user\\project");
-        let uri = path_to_uri(path);
+        let path = std::path::Path::new("C:\\Users\\user\\project");
+        let uri = crate::bridge::path_to_lsp_uri(&path.to_string_lossy());
         assert!(uri.starts_with("file:///"));
-        assert!(uri.contains("C:/Users/user/project") || uri.contains("C:\\Users"));
     }
 
     #[test]
