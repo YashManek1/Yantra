@@ -32,7 +32,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install cargo-llvm-cov
-        run: cargo binstall -y cargo-llvm-cov
+        run: cargo binstall -y cargo-llvm-cov@0.6.21
 
       - name: Generate HTML coverage
         run: cargo llvm-cov --workspace --html
