@@ -19,14 +19,24 @@
 //! - `forge-orchestrator` — Night Run drives the `DAG` scheduler
 //! - `forge-serve` — streams progress to the Live Canvas during the run
 
+pub mod checkpointing;
 pub mod decision_rules;
 pub mod error;
 pub mod mode_policy;
+pub mod night_branch;
+pub mod night_run;
 pub mod twilight;
 
+pub use checkpointing::{Checkpointer, TaskCheckpoint};
 pub use decision_rules::{DecisionRule, NightEvent, RuleAction, RuleCondition, RuleEngine};
 pub use error::NightError;
 pub use mode_policy::{
     ApprovalMode, ModePolicy, SacredPolicy, DAY_POLICY, NIGHT_POLICY, STRICT_POLICY, TRUST_POLICY,
+};
+pub use night_branch::{
+    create_night_branch, format_dawn_digest_branch_section, record_verified_commit, NightBranchRef,
+};
+pub use night_run::{
+    run_night, HaltReason, NightReport, TaskDisposition, TaskExecutor, TaskOutcome,
 };
 pub use twilight::{run_twilight, NightSession, TaskSpec, TwilightUi, ValidatedGoal};

@@ -11,14 +11,20 @@ publish             = false
 yantra-core.workspace         = true
 yantra-orchestrator.workspace = true
 yantra-stvp.workspace         = true
+yantra-obs.workspace          = true
 thiserror.workspace           = true
 tracing.workspace             = true
 tokio.workspace               = true
 futures-util.workspace        = true
+serde                         = { workspace = true, features = ["derive"] }
+serde_json.workspace          = true
+chrono.workspace              = true
+async-trait.workspace         = true
+gix.workspace                 = true
 
 [dev-dependencies]
-chrono.workspace = true
-uuid.workspace   = true
+uuid.workspace          = true
+tokio                   = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

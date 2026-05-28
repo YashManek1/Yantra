@@ -360,7 +360,7 @@ mod tests {
         let ui = MockTwilightUi::new([], vec![], true);
 
         let night_session =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY.clone())
+            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
                 .await
                 .expect("twilight must succeed");
 
@@ -378,7 +378,7 @@ mod tests {
         let ui = MockTwilightUi::new([], vec![], false);
 
         let result =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY.clone()).await;
+            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY).await;
         assert!(
             matches!(result, Err(NightError::TwilightAborted)),
             "expected TwilightAborted, got: {result:?}"
@@ -399,7 +399,7 @@ mod tests {
         let ui = MockTwilightUi::new([], decision_rules, true);
 
         let night_session =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY.clone())
+            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
                 .await
                 .expect("twilight must succeed");
 
@@ -418,7 +418,7 @@ mod tests {
             project_root,
             &signing_key,
             &ui,
-            NIGHT_POLICY.clone(),
+            NIGHT_POLICY,
         )
         .await
         .expect("empty twilight must succeed");
@@ -439,7 +439,7 @@ mod tests {
         let ui = MockTwilightUi::new([], vec![], true);
 
         let night_session =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY.clone())
+            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
                 .await
                 .expect("multi-goal twilight must succeed");
 
@@ -462,7 +462,7 @@ mod tests {
         let ui = MockTwilightUi::new([], vec![], true);
 
         let night_session =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY.clone())
+            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
                 .await
                 .expect("twilight must succeed");
 

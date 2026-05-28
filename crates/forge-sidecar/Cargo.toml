@@ -11,6 +11,10 @@ publish             = false
 name = "yantra-sidecar"
 path = "src/main.rs"
 
+[[bin]]
+name = "yantra-watchdog"
+path = "src/bin/watchdog.rs"
+
 [dependencies]
 yantra-core.workspace   = true
 yantra-crg.workspace    = true
@@ -19,6 +23,8 @@ yantra-memory.workspace = true
 anyhow.workspace        = true
 tracing.workspace       = true
 tokio.workspace         = true
+clap.workspace          = true
+serde_json.workspace    = true
 
 [lints]
 workspace = true

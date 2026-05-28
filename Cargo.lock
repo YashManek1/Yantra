@@ -5033,13 +5033,18 @@ dependencies = [
 name = "yantra-night"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "futures-util",
+ "gix",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "uuid",
  "yantra-core",
+ "yantra-obs",
  "yantra-orchestrator",
  "yantra-stvp",
 ]
@@ -5120,6 +5125,8 @@ name = "yantra-sidecar"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
+ "serde_json",
  "tokio",
  "tracing",
  "yantra-core",
