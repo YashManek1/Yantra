@@ -41,7 +41,11 @@ impl TruthDriftGate {
                 line: None,
                 column: None,
                 message: drift_violation.message,
-                severity: ViolationSeverity::Error,
+                severity: if drift_violation.severity == "warning" {
+                    ViolationSeverity::Warning
+                } else {
+                    ViolationSeverity::Error
+                },
                 rule_id: Some(match drift_violation.kind {
                     DriftKind::ScopeDrift => "truth_drift::scope".to_owned(),
                     DriftKind::ConstraintDrift => "truth_drift::constraint".to_owned(),

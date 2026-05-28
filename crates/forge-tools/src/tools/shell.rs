@@ -78,8 +78,8 @@ impl ShellSandboxServer {
             McpError::internal(format!("failed to create sandbox workdir: {io_error}"))
         })?;
 
-        let project_root_display = self.project_root_path.display().to_string();
-        let work_dir_display = work_dir.display().to_string();
+        let project_root_display = format_volume_path(&self.project_root_path);
+        let work_dir_display = format_volume_path(&work_dir);
 
         let exec_result = tokio::time::timeout(
             Duration::from_secs(self.timeout_seconds),
@@ -118,6 +118,30 @@ impl ShellSandboxServer {
                 "exit_code": output.status.code().unwrap_or(-1),
             })),
         }
+    }
+}
+
+fn format_volume_path(path: &std::path::Path) -> String {
+    let abs_path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let path_str = abs_path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        let mut clean_path = path_str.into_owned();
+        if clean_path.starts_with(r"\\?\") {
+            clean_path = clean_path[4..].to_owned();
+        }
+        let clean_path = clean_path.replace('\\', "/");
+        if clean_path.len() >= 2 && clean_path.as_bytes()[1] == b':' {
+            let drive = clean_path[0..1].to_lowercase();
+            let rest = &clean_path[2..];
+            format!("/{drive}{rest}")
+        } else {
+            clean_path
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        path_str.into_owned()
     }
 }
 
@@ -194,5 +218,32 @@ mod tests {
         );
         let error = result.unwrap_err();
         assert_eq!(error.code, -32602, "must return invalid-params error code");
+    }
+
+    #[tokio::test]
+    async fn docker_sandbox_handles_paths_with_spaces() {
+        if !is_docker_available() {
+            return;
+        }
+
+        let project_root =
+            std::env::temp_dir().join(format!("yantra sandbox path space {}", TaskId::new()));
+        std::fs::create_dir_all(&project_root).unwrap();
+
+        let server = ShellSandboxServer::new(project_root.clone(), "alpine:3.19".to_owned(), 60);
+
+        let params = serde_json::json!({ "command": "echo spaces-work" });
+        let result = server.handle("shell.exec", params).await.unwrap();
+
+        let stdout = result["stdout"].as_str().unwrap_or("");
+        assert!(
+            stdout.contains("spaces-work"),
+            "sandbox must handle paths with spaces; got: {stdout:?}"
+        );
+
+        let exit_code = result["exit_code"].as_i64().unwrap_or(-1);
+        assert_eq!(exit_code, 0);
+
+        std::fs::remove_dir_all(&project_root).unwrap_or_default();
     }
 }

@@ -196,7 +196,15 @@ fn make_truth_token(task_id: TaskId, task_class: TaskClass) -> TruthToken {
     let random_generator = SystemRandom::new();
     let pkcs8_document = Ed25519KeyPair::generate_pkcs8(&random_generator).unwrap();
     let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8_document.as_ref()).unwrap();
-    TruthToken::new(task_id, task_class, Strictness::Light, &key_pair).unwrap()
+    TruthToken::new(
+        task_id,
+        task_class,
+        Strictness::Light,
+        false,
+        [0u8; 32],
+        &key_pair,
+    )
+    .unwrap()
 }
 
 fn make_task(task_class: TaskClass, description: &str) -> TaskNode {

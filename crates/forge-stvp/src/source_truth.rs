@@ -20,7 +20,8 @@
 //! - `forge-core::db` — provides the SQLite connection pool and migration helpers
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use chrono::{DateTime, Utc};
 use ring::digest;
@@ -113,7 +114,7 @@ impl SourceTruth {
             source,
         })?;
 
-        store_hash(&truth_directory, truth.task_id, &content_hash)?;
+        store_hash(project_root, truth.task_id, &content_hash)?;
 
         Ok(content_hash)
     }
@@ -142,7 +143,7 @@ impl SourceTruth {
             })?;
 
         let computed_hash = sha256_hex(yaml_content.as_bytes());
-        let stored_hash = load_hash(&truth_directory, task_id)?;
+        let stored_hash = load_hash(project_root, task_id)?;
 
         if computed_hash != stored_hash {
             return Err(StvpError::HashMismatch {
@@ -160,19 +161,36 @@ fn truth_directory(project_root: &ProjectRoot) -> PathBuf {
     project_root.as_path().join(".yantra").join("source_truth")
 }
 
-fn manifest_db_path(truth_directory: &Path) -> PathBuf {
-    truth_directory.join(MANIFEST_DB_FILE)
+fn manifest_db_path(project_root: &ProjectRoot) -> PathBuf {
+    project_root
+        .as_path()
+        .join(".yantra")
+        .join("hashes")
+        .join(MANIFEST_DB_FILE)
 }
 
+static MIGRATION_ONCE: OnceLock<()> = OnceLock::new();
+
 fn store_hash(
-    truth_directory: &Path,
+    project_root: &ProjectRoot,
     task_id: TaskId,
     content_hash: &str,
 ) -> Result<(), StvpError> {
-    let database_pool = connection_pool(&manifest_db_path(truth_directory))?;
+    let db_path = manifest_db_path(project_root);
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| StvpError::DirectoryCreate {
+            path: parent.display().to_string(),
+            source,
+        })?;
+    }
+    let database_pool = connection_pool(&db_path)?;
     let database_guard = database_pool.lock().map_err(|_| StvpError::LockPoisoned)?;
 
-    apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
+    // VULN-11: apply migration once
+    if MIGRATION_ONCE.get().is_none() {
+        apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
+        let _ = MIGRATION_ONCE.set(());
+    }
 
     let task_id_string = task_id.to_string();
     let existing_hash: Option<String> = database_guard
@@ -195,8 +213,8 @@ fn store_hash(
     Ok(())
 }
 
-fn load_hash(truth_directory: &Path, task_id: TaskId) -> Result<String, StvpError> {
-    let db_path = manifest_db_path(truth_directory);
+fn load_hash(project_root: &ProjectRoot, task_id: TaskId) -> Result<String, StvpError> {
+    let db_path = manifest_db_path(project_root);
     if !db_path.exists() {
         return Err(StvpError::TruthNotFound {
             task_id: task_id.to_string(),
@@ -206,7 +224,11 @@ fn load_hash(truth_directory: &Path, task_id: TaskId) -> Result<String, StvpErro
     let database_pool = connection_pool(&db_path)?;
     let database_guard = database_pool.lock().map_err(|_| StvpError::LockPoisoned)?;
 
-    apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
+    // VULN-11: apply migration once
+    if MIGRATION_ONCE.get().is_none() {
+        apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
+        let _ = MIGRATION_ONCE.set(());
+    }
 
     let task_id_string = task_id.to_string();
     let stored_hash: Option<String> = database_guard

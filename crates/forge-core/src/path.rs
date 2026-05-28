@@ -52,20 +52,50 @@ impl ProjectRoot {
 /// Returns `CoreError::PathEscapesRoot` when the normalized path is outside
 /// the project root.
 pub fn canonicalize_within(root: &ProjectRoot, path: &Path) -> Result<PathBuf, CoreError> {
+    if path.is_absolute() && !is_within_root(root.as_path(), path) {
+        return Err(CoreError::PathEscapesRoot {
+            root: root.as_path().to_path_buf(),
+            requested: path.to_path_buf(),
+        });
+    }
+
     let joined_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
         root.as_path().join(path)
     };
-    let normalized_path = normalize_path(&joined_path);
 
-    if normalized_path.starts_with(root.as_path()) {
+    let normalized_path = joined_path
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_path(&joined_path));
+
+    if is_within_root(root.as_path(), &normalized_path) {
         Ok(normalized_path)
     } else {
         Err(CoreError::PathEscapesRoot {
             root: root.as_path().to_path_buf(),
             requested: normalized_path,
         })
+    }
+}
+
+fn is_within_root(root: &Path, path: &Path) -> bool {
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| normalize_path(path));
+
+    #[cfg(windows)]
+    {
+        let root_str = canonical_root.to_string_lossy().to_lowercase();
+        let path_str = canonical_path.to_string_lossy().to_lowercase();
+
+        let clean_root = root_str.strip_prefix(r"\\?\").unwrap_or(&root_str);
+        let clean_path = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+
+        clean_path.starts_with(clean_root)
+    }
+    #[cfg(not(windows))]
+    {
+        canonical_path.starts_with(&canonical_root)
     }
 }
 
@@ -137,7 +167,7 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized_path
 }
 
-fn sacred_pattern_matches(pattern: &str, relative_path: &str) -> bool {
+pub fn sacred_pattern_matches(pattern: &str, relative_path: &str) -> bool {
     if let Some(directory_prefix) = pattern.strip_suffix("/**") {
         return relative_path == directory_prefix
             || relative_path.starts_with(&format!("{directory_prefix}/"));

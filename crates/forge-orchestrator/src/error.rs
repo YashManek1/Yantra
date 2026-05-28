@@ -120,6 +120,13 @@ pub enum OrchestratorError {
         /// String representation of the failed task identifier.
         task_id: String,
     },
+
+    /// A task finished successfully but its result was missing from the store.
+    #[error("task result for {task_id} is missing")]
+    ResultMissing {
+        /// String representation of the task identifier.
+        task_id: String,
+    },
 }
 
 impl From<rusqlite::Error> for OrchestratorError {

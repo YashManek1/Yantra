@@ -58,11 +58,8 @@ impl SacredGuardServer {
         let path = PathBuf::from(path_string);
         let path_is_sacred = is_sacred(&self.project_root, &path)?;
 
-        if path_is_sacred && !has_sacred_authorization(params) {
-            return Err(McpError::forbidden(format!(
-                "path {path_string:?} is protected by sacred-file policy; \
-                 supply metadata.sacred_authorization=true after STVP approval"
-            )));
+        if path_is_sacred {
+            verify_sacred_authorization(&self.project_root, params)?;
         }
 
         Ok(json!({ "allowed": true }))
@@ -80,16 +77,37 @@ impl SacredGuardServer {
     }
 }
 
-fn has_sacred_authorization(params: &Value) -> bool {
-    params
-        .get("sacred_authorization")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || params
-            .get("metadata")
-            .and_then(|metadata_value| metadata_value.get("sacred_authorization"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
+fn verify_sacred_authorization(project_root: &ProjectRoot, params: &Value) -> Result<(), McpError> {
+    let token_val = params
+        .get("truth_token")
+        .or_else(|| params.get("metadata").and_then(|m| m.get("truth_token")))
+        .or_else(|| params.get("_meta").and_then(|m| m.get("truth_token")))
+        .ok_or_else(|| McpError::forbidden("sacred action requires a truth token"))?;
+
+    let token: yantra_core::truth::TruthToken = serde_json::from_value(token_val.clone())
+        .map_err(|err| McpError::invalid_params(format!("invalid truth token format: {err}")))?;
+
+    if !token.sacred_authorized {
+        return Err(McpError::forbidden(
+            "truth token does not authorize sacred modifications",
+        ));
+    }
+
+    let yantra_dir = project_root.as_path().join(".yantra");
+    let pub_file_path = yantra_dir.join("session.pub");
+    if !pub_file_path.exists() {
+        return Err(McpError::forbidden(
+            "session public key not found; cannot verify token",
+        ));
+    }
+    let public_key_bytes = std::fs::read(&pub_file_path)
+        .map_err(|source| McpError::internal(format!("failed to read session.pub: {source}")))?;
+    let verifying_key = yantra_core::truth::VerifyingKey::new(public_key_bytes);
+    if !token.verify(&verifying_key) {
+        return Err(McpError::forbidden("truth token signature is invalid"));
+    }
+
+    Ok(())
 }
 
 #[async_trait]
@@ -129,9 +147,26 @@ mod tests {
         (root_dir, project_root)
     }
 
+    fn generate_and_save_key(
+        yantra_dir: &std::path::Path,
+    ) -> (
+        ring::signature::Ed25519KeyPair,
+        yantra_core::truth::VerifyingKey,
+    ) {
+        use ring::rand::SystemRandom;
+        use ring::signature::Ed25519KeyPair;
+        let rng = SystemRandom::new();
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let verifying_key = yantra_core::truth::VerifyingKey::from_key_pair(&key_pair);
+        std::fs::write(yantra_dir.join("session.pub"), verifying_key.as_bytes()).unwrap();
+        (key_pair, verifying_key)
+    }
+
     #[test]
     fn sacred_file_guard_blocks_unauthorized_write() {
-        let (_root, project_root) = temp_root_with_sacred(&["src/auth/**"]);
+        let (root, project_root) = temp_root_with_sacred(&["src/auth/**"]);
+        let _key_pair = generate_and_save_key(&root.join(".yantra"));
         let guard = SacredGuardServer::new(project_root);
 
         let params = serde_json::json!({ "path": "src/auth/middleware.rs" });
@@ -143,20 +178,27 @@ mod tests {
             error.code, -32003,
             "must return a forbidden (-32003) error code"
         );
-        assert!(
-            error.message.contains("sacred-file policy"),
-            "error message must reference sacred-file policy"
-        );
     }
 
     #[test]
     fn sacred_file_guard_allows_authorized_write() {
-        let (_root, project_root) = temp_root_with_sacred(&["src/auth/**"]);
+        let (root, project_root) = temp_root_with_sacred(&["src/auth/**"]);
+        let (key_pair, _verifying_key) = generate_and_save_key(&root.join(".yantra"));
         let guard = SacredGuardServer::new(project_root);
+
+        let token = yantra_core::truth::TruthToken::new(
+            yantra_core::TaskId::new(),
+            yantra_core::TaskClass::BugFix,
+            yantra_core::Strictness::Light,
+            true,
+            [0u8; 32],
+            &key_pair,
+        )
+        .unwrap();
 
         let params = serde_json::json!({
             "path": "src/auth/middleware.rs",
-            "metadata": { "sacred_authorization": true }
+            "metadata": { "truth_token": token }
         });
         let result = guard.check_write(&params);
 

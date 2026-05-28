@@ -158,7 +158,7 @@ enum EffectiveAction {
 /// updated, and `NightError::CheckpointIo` on checkpoint persistence failure.
 #[instrument(skip_all, fields(session_id = %session.session_id))]
 pub async fn run_night(
-    session: NightSession,
+    session: &NightSession,
     yantra_dir: &Path,
     project_root: &Path,
     executor: Arc<dyn TaskExecutor>,
@@ -228,20 +228,22 @@ pub async fn run_night(
             break;
         }
 
-        if !circuit_breaker.is_dispatch_allowed() {
-            warn!("circuit breaker open; pausing dispatch for 5 seconds");
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            continue;
-        }
-
+        let mut breaker_open = false;
         let handles: Vec<_> = ready_task_ids
             .iter()
             .filter_map(|&task_id| {
+                if breaker_open {
+                    return None;
+                }
                 let claimed = dag.try_mark_running(task_id).unwrap_or(false);
                 if !claimed {
                     return None;
                 }
-                circuit_breaker.record_call();
+                if !circuit_breaker.try_dispatch() {
+                    breaker_open = true;
+                    let _ = dag.requeue_for_retry(task_id);
+                    return None;
+                }
                 let description = description_map.get(&task_id)?.clone();
                 let executor_ref = Arc::clone(&executor);
                 let session_id = session.session_id;
@@ -252,6 +254,12 @@ pub async fn run_night(
                 }))
             })
             .collect();
+
+        if breaker_open && handles.is_empty() {
+            warn!("circuit breaker open; pausing dispatch for 5 seconds");
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            continue;
+        }
 
         let outcomes: Vec<TaskOutcome> = join_all(handles)
             .await
@@ -590,7 +598,7 @@ mod tests {
             cost_per_task: 0.01,
         });
 
-        let report = run_night(session, &yantra_dir, &project_root, executor)
+        let report = run_night(&session, &yantra_dir, &project_root, executor)
             .await
             .unwrap();
 
@@ -612,7 +620,7 @@ mod tests {
         let executor = Arc::new(AlwaysCompleteExecutor {
             cost_per_task: 1.00,
         });
-        let report = run_night(session, &yantra_dir, &project_root, executor)
+        let report = run_night(&session, &yantra_dir, &project_root, executor)
             .await
             .unwrap();
 
@@ -629,7 +637,7 @@ mod tests {
         let session = make_session(&yantra_dir, 2, TRUST_POLICY);
         let executor = Arc::new(AlwaysFailExecutor);
 
-        let report = run_night(session, &yantra_dir, &project_root, executor)
+        let report = run_night(&session, &yantra_dir, &project_root, executor)
             .await
             .unwrap();
 
@@ -647,7 +655,7 @@ mod tests {
             cost_per_task: 0.001,
         });
 
-        let report = run_night(session, &yantra_dir, &project_root, executor)
+        let report = run_night(&session, &yantra_dir, &project_root, executor)
             .await
             .unwrap();
 
@@ -665,7 +673,7 @@ mod tests {
             cost_per_task: 0.01,
         });
 
-        let report = run_night(session, &yantra_dir, &project_root, executor)
+        let report = run_night(&session, &yantra_dir, &project_root, executor)
             .await
             .unwrap();
 
@@ -682,7 +690,7 @@ mod tests {
             cost_per_task: 0.01,
         });
 
-        let report = run_night(session, &yantra_dir, &project_root, executor)
+        let report = run_night(&session, &yantra_dir, &project_root, executor)
             .await
             .unwrap();
 

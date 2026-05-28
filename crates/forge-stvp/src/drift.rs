@@ -19,6 +19,7 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
+use yantra_core::path::sacred_pattern_matches;
 
 use crate::source_truth::SourceTruth;
 
@@ -40,6 +41,8 @@ pub struct DriftViolation {
     pub message: String,
     /// Path of the file that caused the violation, if applicable.
     pub file_path: Option<String>,
+    /// Severity of the violation ("error" or "warning").
+    pub severity: String,
 }
 
 /// Filenames that are treated as dependency manifests.
@@ -109,24 +112,67 @@ fn check_scope_drift(
     modified_files: &[String],
     violations: &mut Vec<DriftViolation>,
 ) {
-    let out_of_scope_answer = match truth.answers.get("out_of_scope") {
-        Some(answer) if !answer.trim().is_empty() => answer.trim().to_owned(),
-        _ => return,
-    };
+    let out_of_scope_answer = truth
+        .answers
+        .get("out_of_scope")
+        .map(|a| a.trim())
+        .filter(|a| !a.is_empty());
 
-    let out_of_scope_files: Vec<&str> = out_of_scope_answer
-        .split([',', '\n'])
-        .map(str::trim)
-        .filter(|file_path| !file_path.is_empty())
-        .collect();
+    let in_scope_answer = truth
+        .answers
+        .get("in_scope_paths")
+        .map(|a| a.trim())
+        .filter(|a| !a.is_empty());
 
-    for modified_file in modified_files {
-        if out_of_scope_files.contains(&modified_file.as_str()) {
-            violations.push(DriftViolation {
-                kind: DriftKind::ScopeDrift,
-                message: format!("diff modifies '{modified_file}' which is listed in out_of_scope"),
-                file_path: Some(modified_file.clone()),
-            });
+    if out_of_scope_answer.is_none() && in_scope_answer.is_none() {
+        violations.push(DriftViolation {
+            kind: DriftKind::ConstraintDrift,
+            message: "Neither out_of_scope nor in_scope_paths is set. Please be explicit about task scope.".to_owned(),
+            file_path: None,
+            severity: "warning".to_owned(),
+        });
+    }
+
+    if let Some(out_of_scope_raw) = out_of_scope_answer {
+        let out_of_scope_files: Vec<&str> = out_of_scope_raw
+            .split([',', '\n'])
+            .map(str::trim)
+            .filter(|file_path| !file_path.is_empty())
+            .collect();
+
+        for modified_file in modified_files {
+            if out_of_scope_files.contains(&modified_file.as_str()) {
+                violations.push(DriftViolation {
+                    kind: DriftKind::ScopeDrift,
+                    message: format!(
+                        "diff modifies '{modified_file}' which is listed in out_of_scope"
+                    ),
+                    file_path: Some(modified_file.clone()),
+                    severity: "error".to_owned(),
+                });
+            }
+        }
+    }
+
+    if let Some(in_scope_raw) = in_scope_answer {
+        let in_scope_patterns: Vec<&str> = in_scope_raw
+            .split([',', '\n'])
+            .map(str::trim)
+            .filter(|file_path| !file_path.is_empty())
+            .collect();
+
+        for modified_file in modified_files {
+            let matched = in_scope_patterns
+                .iter()
+                .any(|&pattern| sacred_pattern_matches(pattern, modified_file));
+            if !matched {
+                violations.push(DriftViolation {
+                    kind: DriftKind::ScopeDrift,
+                    message: format!("diff modifies '{modified_file}' which is outside the positive allowlist in_scope_paths"),
+                    file_path: Some(modified_file.clone()),
+                    severity: "error".to_owned(),
+                });
+            }
         }
     }
 }
@@ -159,6 +205,7 @@ fn check_constraint_drift(
                      but new_deps_allowed is 'no'"
                 ),
                 file_path: Some(modified_file.clone()),
+                severity: "error".to_owned(),
             });
         }
     }
@@ -174,16 +221,21 @@ mod tests {
     use super::*;
 
     fn make_truth(answers: &[(&str, &str)]) -> SourceTruth {
+        let mut answers_map: BTreeMap<String, String> = answers
+            .iter()
+            .map(|&(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+        if !answers_map.contains_key("out_of_scope") && !answers_map.contains_key("in_scope_paths")
+        {
+            answers_map.insert("out_of_scope".to_string(), "none".to_string());
+        }
         SourceTruth {
             task_id: TaskId::new(),
             task_class: TaskClass::NewFeature,
             strictness: Strictness::Strict,
             description: "implement rate limiting".to_owned(),
             created_at: Utc::now(),
-            answers: answers
-                .iter()
-                .map(|&(key, value)| (key.to_string(), value.to_string()))
-                .collect::<BTreeMap<_, _>>(),
+            answers: answers_map,
             augmented_question_ids: Vec::new(),
         }
     }

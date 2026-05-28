@@ -21,6 +21,7 @@ members = [
     "crates/forge-eval",
     "crates/forge-swarm",
     "crates/forge-federation", "try-yantra",
+    "tests",
 ]
 resolver = "2"
 

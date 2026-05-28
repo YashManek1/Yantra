@@ -29,25 +29,19 @@ struct Hunk {
 ///
 /// If the diff text does not contain unified diff hunk headers (e.g. `@@`),
 /// it is treated as a full file write/creation payload.
-pub fn apply_diff_to_file(
-    project_root: &Path,
-    file_path: &str,
-    diff_text: &str,
-) -> Result<(), String> {
-    let canonical_path = project_root.join(file_path);
-
+pub fn apply_diff_to_file(canonical_path: &Path, diff_text: &str) -> Result<(), String> {
     if !diff_text.contains("@@") {
         if let Some(parent_directory) = canonical_path.parent() {
             std::fs::create_dir_all(parent_directory)
                 .map_err(|io_error| format!("failed to create parent directories: {io_error}"))?;
         }
-        std::fs::write(&canonical_path, diff_text)
+        std::fs::write(canonical_path, diff_text)
             .map_err(|io_error| format!("failed to write file: {io_error}"))?;
         return Ok(());
     }
 
     let existing_content = if canonical_path.exists() {
-        std::fs::read_to_string(&canonical_path)
+        std::fs::read_to_string(canonical_path)
             .map_err(|io_error| format!("failed to read target file: {io_error}"))?
     } else {
         String::new()
@@ -60,7 +54,7 @@ pub fn apply_diff_to_file(
         std::fs::create_dir_all(parent_directory)
             .map_err(|io_error| format!("failed to create parent directories: {io_error}"))?;
     }
-    std::fs::write(&canonical_path, modified_content)
+    std::fs::write(canonical_path, modified_content)
         .map_err(|io_error| format!("failed to write modified file: {io_error}"))?;
 
     Ok(())
@@ -180,7 +174,12 @@ fn apply_hunks(file_content: &str, hunks: &[Hunk]) -> Result<String, String> {
         line_offset += new_len - old_len;
     }
 
-    Ok(file_lines.join("\n"))
+    let line_ending = if file_content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    Ok(file_lines.join(line_ending))
 }
 
 fn find_matching_index(

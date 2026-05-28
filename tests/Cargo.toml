@@ -1,0 +1,18 @@
+[package]
+name = "yantra-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+yantra-core = { path = "../crates/forge-core" }
+yantra-stvp = { path = "../crates/forge-stvp" }
+yantra-tools = { path = "../crates/forge-tools" }
+yantra-orchestrator = { path = "../crates/forge-orchestrator" }
+yantra-verifier = { path = "../crates/forge-verifier" }
+yantra-agents = { path = "../crates/forge-agents" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+ring = { workspace = true }
+chrono = { workspace = true }
+tempfile = "3"

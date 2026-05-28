@@ -118,7 +118,7 @@ async fn checkpoints_survive_after_run_completes() {
     let (session, task_ids) = make_session(&yantra_dir, 3, TRUST_POLICY);
     let executor: Arc<dyn TaskExecutor> = Arc::new(AlwaysCompleteExecutor);
 
-    let report = run_night(session, &yantra_dir, &project_root, executor)
+    let report = run_night(&session, &yantra_dir, &project_root, executor)
         .await
         .unwrap();
 
@@ -148,7 +148,7 @@ async fn second_run_succeeds_with_orphaned_checkpoints_present() {
 
     // First run writes checkpoints to disk
     let (session1, _) = make_session(&yantra_dir, 2, TRUST_POLICY);
-    run_night(session1, &yantra_dir, &project_root, Arc::clone(&executor))
+    run_night(&session1, &yantra_dir, &project_root, Arc::clone(&executor))
         .await
         .unwrap();
 
@@ -163,7 +163,7 @@ async fn second_run_succeeds_with_orphaned_checkpoints_present() {
     .unwrap_or_default();
 
     let (session2, _) = make_session(&second_yantra_dir, 2, TRUST_POLICY);
-    let report = run_night(session2, &second_yantra_dir, &project_root, executor)
+    let report = run_night(&session2, &second_yantra_dir, &project_root, executor)
         .await
         .unwrap();
 
@@ -184,7 +184,7 @@ async fn checkpoints_exist_after_budget_exceeded_halt() {
     let (session, _) = make_session(&yantra_dir, 5, policy);
 
     let report = run_night(
-        session,
+        &session,
         &yantra_dir,
         &project_root,
         Arc::new(HighCostExecutor) as Arc<dyn TaskExecutor>,
