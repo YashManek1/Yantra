@@ -114,7 +114,6 @@ impl SpeculationEngine {
         let normalised_key = normalise_description(completed_description);
 
         if let Some(cached_predictions) = self.cache.lock().get(&normalised_key) {
-            tracing::debug!("speculation cache hit for '{normalised_key}'");
             return Ok(cached_predictions);
         }
 
