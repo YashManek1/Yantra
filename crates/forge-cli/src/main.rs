@@ -2,10 +2,10 @@
 //!
 //! Entry point for the `yantra` binary. Uses clap for argument parsing and
 //! ratatui for the interactive terminal UI. Delegates all runtime logic to
-//! `forge-orchestrator`, `forge-night`, and `forge-serve`.
+//! `forge-orchestrator`, `forge-night`, and `forge-canvas`.
 //!
 //! ## Input
-//! - CLI arguments: subcommand (index, ask, run, night), flags, and options
+//! - CLI arguments: subcommand (index, ask, run, canvas, graph, observe), flags
 //! - Interactive terminal input during `STVP` questionnaires
 //!
 //! ## Output
@@ -15,7 +15,7 @@
 //! ## Related
 //! - `forge-orchestrator` — receives task submissions
 //! - `forge-night` — starts Night Mode on `yantra night`
-//! - `forge-serve` — optionally launched for the Live Canvas UI
+//! - `forge-canvas` — hosts the visual canvas editor and CRG graph viewer
 
 mod approval;
 mod ask_verifier;
@@ -105,6 +105,25 @@ enum Commands {
         /// Natural-language task description
         description: String,
     },
+    /// Opens the browser-based visual canvas editor for a website
+    Canvas {
+        /// Optional URL to clone into an editable React + Tailwind project
+        url: Option<String>,
+        /// Port for the local canvas server
+        #[arg(long, default_value_t = 8088)]
+        port: u16,
+    },
+    /// Opens the CRG dashboard TUI (press `g` for the browser graph viewer)
+    Graph {
+        /// Optional symbol id to focus the browser graph viewer on
+        #[arg(long)]
+        focus: Option<String>,
+        /// Port for the local graph viewer server
+        #[arg(long, default_value_t = 8088)]
+        port: u16,
+    },
+    /// Opens the live observability TUI backed by `.yantra/traces.sqlite`
+    Observe,
     /// Prints cost gauge and active session info
     Status,
     /// Prints the current version
@@ -502,6 +521,22 @@ async fn main() -> anyhow::Result<()> {
                 error: None,
             };
             record_span(&trace_connection, &span_record)?;
+        }
+        Commands::Canvas { url, port } => {
+            commands::canvas::canvas_command(url, port).await?;
+        }
+        Commands::Graph { focus, port } => {
+            let crg_database_path = project_root.as_path().join(".yantra").join("crg.sqlite");
+            commands::graph::graph_command(focus, crg_database_path, port).await?;
+        }
+        Commands::Observe => {
+            let trace_database_path = project_root.as_path().join(".yantra").join("traces.sqlite");
+            let cost_thresholds = CostThresholds {
+                soft: routing_config.budget.soft_usd,
+                hard: routing_config.budget.hard_usd,
+                kill: routing_config.budget.kill_usd,
+            };
+            commands::observe::observe_command(trace_database_path, cost_thresholds).await?;
         }
         Commands::Status => {
             let trace_database_path = project_root.as_path().join(".yantra").join("traces.sqlite");

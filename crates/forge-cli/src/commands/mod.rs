@@ -6,4 +6,7 @@
 //! ## Related
 //! - `forge-cli::main` — parses CLI args and delegates to these modules
 
+pub mod canvas;
+pub mod graph;
+pub mod observe;
 pub mod run;
