@@ -215,7 +215,18 @@ async fn lsp_get_definition_returns_error_when_server_unavailable() {
 #[tokio::test]
 async fn lsp_mcp_json_rpc_routing_unknown_method_returns_error_frame() {
     let project_directory = temporary_project("lsp-mcp-routing");
-    let bridge = LspBridge::new(&project_directory);
+    let bridge = LspBridge::with_configs(&project_directory, {
+        use yantra_lsp::{Language, LspServerConfig};
+        let mut configs = std::collections::HashMap::new();
+        configs.insert(
+            Language::Rust,
+            LspServerConfig {
+                binary: "yantra-nonexistent-binary-xyz".to_owned(),
+                args: vec![],
+            },
+        );
+        configs
+    });
     let server = LspMcpServer::new(bridge);
     let mut router = McpRouter::new(["lsp.get_hover".to_owned()]);
     router.register_server(Arc::new(server));

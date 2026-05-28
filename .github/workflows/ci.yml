@@ -23,7 +23,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: '1.86'
           components: rustfmt
 
       - name: Check formatting
@@ -39,7 +39,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: '1.86'
           components: clippy
 
       - name: Cache Cargo
@@ -66,7 +66,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: '1.86'
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -90,7 +90,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: '1.86'
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -110,7 +110,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: '1.86'
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
