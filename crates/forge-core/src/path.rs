@@ -99,33 +99,77 @@ fn is_within_root(root: &Path, path: &Path) -> bool {
     }
 }
 
-/// Loads and parses sacred-file glob patterns from `.yantra/sacred.txt`.
+/// Built-in sacred patterns shipped with Yantra.
 ///
-/// Returns an empty list when the file does not exist. Callers in hot paths
-/// should cache the returned `Vec` themselves rather than invoking this on
-/// every path check.
+/// These are always active regardless of whether a project-level
+/// `.yantra/sacred.txt` exists. They protect auth, payments, crypto,
+/// migration, CI/CD, and workspace manifests by default.
+const BUILT_IN_SACRED_PATTERNS: &[&str] = &[
+    "src/auth/**",
+    "src/payments/**",
+    "src/migrations/**",
+    "src/crypto/**",
+    "src/security/**",
+    "configs/**",
+    ".github/workflows/**",
+    "**/Cargo.toml",
+];
+
+/// Loads and parses sacred-file glob patterns from multiple sources.
+///
+/// Pattern precedence (later wins on deduplication):
+/// 1. Built-in defaults compiled into the binary (`BUILT_IN_SACRED_PATTERNS`).
+/// 2. `configs/default-sacred.txt` in the project root (optional; extends
+///    built-ins for project-specific defaults committed to source control).
+/// 3. `.yantra/sacred.txt` in the yantra dir (user overrides at runtime).
+///
+/// Returns an empty list (only built-ins) when no file-based sources exist.
+/// Callers in hot paths should cache the returned `Vec` rather than invoking
+/// this on every path check.
 ///
 /// # Errors
 ///
-/// Returns `CoreError::PathIo` when the sacred pattern file exists but cannot
+/// Returns `CoreError::PathIo` when a sacred pattern file exists but cannot
 /// be read.
 pub fn load_sacred_patterns(yantra_dir: &Path) -> Result<Vec<String>, CoreError> {
-    let sacred_patterns_path = yantra_dir.join("sacred.txt");
-    if !sacred_patterns_path.exists() {
-        return Ok(Vec::new());
-    }
-    let file_contents =
-        std::fs::read_to_string(&sacred_patterns_path).map_err(|source| CoreError::PathIo {
-            path: sacred_patterns_path,
-            source,
-        })?;
-    let parsed_patterns = file_contents
-        .lines()
-        .map(str::trim)
-        .filter(|pattern| !pattern.is_empty() && !pattern.starts_with('#'))
-        .map(str::to_string)
+    let mut all_patterns: Vec<String> = BUILT_IN_SACRED_PATTERNS
+        .iter()
+        .map(|&pattern| pattern.to_owned())
         .collect();
-    Ok(parsed_patterns)
+
+    let project_root = yantra_dir.parent().unwrap_or(yantra_dir);
+
+    let project_default_path = project_root.join("configs").join("default-sacred.txt");
+    if project_default_path.exists() {
+        let file_contents =
+            std::fs::read_to_string(&project_default_path).map_err(|source| CoreError::PathIo {
+                path: project_default_path,
+                source,
+            })?;
+        extend_patterns_from_text(&mut all_patterns, &file_contents);
+    }
+
+    let user_sacred_path = yantra_dir.join("sacred.txt");
+    if user_sacred_path.exists() {
+        let file_contents =
+            std::fs::read_to_string(&user_sacred_path).map_err(|source| CoreError::PathIo {
+                path: user_sacred_path,
+                source,
+            })?;
+        extend_patterns_from_text(&mut all_patterns, &file_contents);
+    }
+
+    all_patterns.dedup();
+    Ok(all_patterns)
+}
+
+fn extend_patterns_from_text(patterns: &mut Vec<String>, text: &str) {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            patterns.push(trimmed.to_owned());
+        }
+    }
 }
 
 /// Checks whether a path matches `.yantra/sacred.txt` patterns.
@@ -243,5 +287,71 @@ mod tests {
         assert!(is_sacred(&project_root, Path::new("README.md")).unwrap());
         assert!(is_sacred(&project_root, Path::new("src/auth/token.rs")).unwrap());
         assert!(!is_sacred(&project_root, Path::new("CHANGELOG.md")).unwrap());
+    }
+
+    #[test]
+    fn built_in_patterns_active_without_any_sacred_file() {
+        let root_path = std::env::temp_dir().join(format!("yantra-core-{}", TaskId::new()));
+        fs::create_dir_all(root_path.join(".yantra")).unwrap();
+        fs::create_dir_all(root_path.join("src/auth")).unwrap();
+        fs::write(root_path.join("src/auth/jwt.rs"), "").unwrap();
+        let project_root = ProjectRoot::new(&root_path).unwrap();
+
+        assert!(is_sacred(&project_root, Path::new("src/auth/jwt.rs")).unwrap());
+        assert!(!is_sacred(&project_root, Path::new("src/main.rs")).unwrap());
+    }
+
+    #[test]
+    fn built_in_pattern_matches_deeply_nested_subdirectory() {
+        let root_path = std::env::temp_dir().join(format!("yantra-core-{}", TaskId::new()));
+        let nested_auth_dir = root_path.join("src/auth/tokens/jwt");
+        fs::create_dir_all(&nested_auth_dir).unwrap();
+        fs::create_dir_all(root_path.join(".yantra")).unwrap();
+        fs::write(nested_auth_dir.join("claims.rs"), "").unwrap();
+        let project_root = ProjectRoot::new(&root_path).unwrap();
+
+        assert!(
+            is_sacred(&project_root, Path::new("src/auth/tokens/jwt/claims.rs")).unwrap(),
+            "src/auth/** must match deeply nested subdirectories"
+        );
+    }
+
+    #[test]
+    fn default_sacred_txt_patterns_are_loaded_as_baseline() {
+        let root_path = std::env::temp_dir().join(format!("yantra-core-{}", TaskId::new()));
+        let config_dir = root_path.join("configs");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::create_dir_all(root_path.join(".yantra")).unwrap();
+        fs::write(config_dir.join("default-sacred.txt"), "src/billing/**\n").unwrap();
+        fs::create_dir_all(root_path.join("src/billing")).unwrap();
+        fs::write(root_path.join("src/billing/invoice.rs"), "").unwrap();
+        let project_root = ProjectRoot::new(&root_path).unwrap();
+
+        assert!(
+            is_sacred(&project_root, Path::new("src/billing/invoice.rs")).unwrap(),
+            "configs/default-sacred.txt must be loaded as a baseline"
+        );
+    }
+
+    #[test]
+    fn sacred_pattern_glob_double_star_prefix_matches_any_depth() {
+        assert!(sacred_pattern_matches("**/Cargo.toml", "Cargo.toml"));
+        assert!(sacred_pattern_matches(
+            "**/Cargo.toml",
+            "crates/forge-core/Cargo.toml"
+        ));
+        assert!(sacred_pattern_matches("**/Cargo.toml", "a/b/c/Cargo.toml"));
+        assert!(!sacred_pattern_matches("**/Cargo.toml", "Cargo.lock"));
+    }
+
+    #[test]
+    fn sacred_pattern_glob_double_star_suffix_matches_recursive() {
+        assert!(sacred_pattern_matches("src/auth/**", "src/auth/jwt.rs"));
+        assert!(sacred_pattern_matches(
+            "src/auth/**",
+            "src/auth/tokens/claims.rs"
+        ));
+        assert!(sacred_pattern_matches("src/auth/**", "src/auth"));
+        assert!(!sacred_pattern_matches("src/auth/**", "src/other/jwt.rs"));
     }
 }
