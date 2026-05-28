@@ -40,7 +40,7 @@ pub enum SacredPolicy {
 }
 
 /// The complete bundle of runtime guardrails for a Night Mode session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ModePolicy {
     /// STVP strictness level applied to tasks run under this policy.
     pub stvp_strictness: Strictness,
@@ -190,9 +190,15 @@ mod tests {
         let night = NIGHT_POLICY.confidence_threshold;
         let day = DAY_POLICY.confidence_threshold;
         let trust = TRUST_POLICY.confidence_threshold;
-        assert!(strict > night, "strict ({strict}) must exceed night ({night})");
+        assert!(
+            strict > night,
+            "strict ({strict}) must exceed night ({night})"
+        );
         assert!(strict > day, "strict ({strict}) must exceed day ({day})");
-        assert!(strict > trust, "strict ({strict}) must exceed trust ({trust})");
+        assert!(
+            strict > trust,
+            "strict ({strict}) must exceed trust ({trust})"
+        );
         assert!(night > day, "night ({night}) must exceed day ({day})");
     }
 
