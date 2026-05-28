@@ -10,9 +10,15 @@ publish             = false
 [dependencies]
 yantra-core.workspace         = true
 yantra-orchestrator.workspace = true
+yantra-stvp.workspace         = true
 thiserror.workspace           = true
 tracing.workspace             = true
 tokio.workspace               = true
+futures-util.workspace        = true
+
+[dev-dependencies]
+chrono.workspace = true
+uuid.workspace   = true
 
 [lints]
 workspace = true
