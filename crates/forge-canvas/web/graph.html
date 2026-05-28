@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yantra Canvas — CRG Graph</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    body { margin: 0; }
+    #graph-canvas { width: 100%; height: 100vh; background: #0a0a0a; }
+    .drawer { transition: transform 0.2s ease-out; }
+    .drawer.hidden-drawer { transform: translateX(100%); }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-mono text-sm overflow-hidden h-screen">
+
+  <header class="absolute top-0 left-0 right-0 px-4 py-2 bg-gray-900 border-b border-gray-800 z-10 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-amber-400 font-bold">⚙ CRG Graph</span>
+      <span id="stats-label" class="text-xs text-gray-400">loading…</span>
+    </div>
+    <input id="search-input" type="text" placeholder="search symbol…" class="bg-gray-800 border border-gray-700 rounded px-2 py-1 w-64 text-xs text-gray-200" />
+  </header>
+
+  <div id="graph-canvas" class="mt-12"></div>
+
+  <aside id="explanation-drawer" class="drawer hidden-drawer absolute top-12 right-0 bottom-0 w-96 bg-gray-900 border-l border-gray-800 overflow-y-auto p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 id="drawer-title" class="text-amber-400 font-bold text-base">Symbol Detail</h2>
+      <button id="close-drawer" class="text-gray-400 hover:text-gray-200 text-lg leading-none">×</button>
+    </div>
+    <div id="symbol-meta" class="text-xs text-gray-400 mb-3"></div>
+    <div id="markdown-content" class="prose prose-invert prose-sm text-gray-200">
+      <p class="text-gray-500">Click a node to see its explanation.</p>
+    </div>
+  </aside>
+
+<script>
+  const queryParams = new URLSearchParams(window.location.search);
+  const focusParam = queryParams.get('focus');
+  const focusUrl = focusParam ? `/api/graph/json?focus=${encodeURIComponent(focusParam)}` : '/api/graph/json';
+
+  let nodeDataMap = new Map();
+  let network = null;
+
+  async function loadGraph() {
+    const graphResponse = await fetch(focusUrl);
+    if (!graphResponse.ok) {
+      document.getElementById('stats-label').textContent = 'failed to load graph';
+      return;
+    }
+    const graphData = await graphResponse.json();
+
+    nodeDataMap = new Map();
+    const visNodes = graphData.nodes.map(node => {
+      nodeDataMap.set(node.id, node);
+      return {
+        id: node.id,
+        label: node.label,
+        title: `${node.kind}\n${node.file}`,
+        color: node.color || '#6b7280',
+        value: Math.max(1, node.hub_score || 1)
+      };
+    });
+    const visEdges = graphData.edges.map((edge, edgeIndex) => ({
+      id: `e${edgeIndex}`,
+      from: edge.from,
+      to: edge.to,
+      arrows: 'to',
+      color: { color: '#4b5563', opacity: 0.5 },
+      smooth: { type: 'continuous' }
+    }));
+
+    document.getElementById('stats-label').textContent =
+      `${visNodes.length} nodes · ${visEdges.length} edges`;
+
+    network = new vis.Network(
+      document.getElementById('graph-canvas'),
+      { nodes: new vis.DataSet(visNodes), edges: new vis.DataSet(visEdges) },
+      {
+        nodes: {
+          shape: 'dot',
+          scaling: { min: 8, max: 32 },
+          font: { color: '#e5e7eb', size: 12, face: 'monospace' }
+        },
+        edges: { width: 1 },
+        physics: { stabilization: { iterations: 100 } },
+        interaction: { hover: true, tooltipDelay: 200 }
+      }
+    );
+
+    network.on('click', (clickEvent) => {
+      if (clickEvent.nodes.length === 0) return;
+      const clickedId = clickEvent.nodes[0];
+      showExplanation(clickedId);
+    });
+  }
+
+  async function showExplanation(symbolId) {
+    const drawer = document.getElementById('explanation-drawer');
+    drawer.classList.remove('hidden-drawer');
+
+    const nodeData = nodeDataMap.get(symbolId);
+    if (nodeData) {
+      document.getElementById('drawer-title').textContent = nodeData.label;
+      document.getElementById('symbol-meta').innerHTML =
+        `<span class="text-amber-400">${nodeData.kind}</span> · <span>${nodeData.file}</span>`;
+    }
+    document.getElementById('markdown-content').innerHTML =
+      '<p class="text-gray-500">Generating explanation…</p>';
+
+    try {
+      const explainResponse = await fetch('/api/graph/explain', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol_id: symbolId})
+      });
+      if (!explainResponse.ok) {
+        document.getElementById('markdown-content').innerHTML =
+          '<p class="text-red-400">Failed to generate explanation.</p>';
+        return;
+      }
+      const explanationBody = await explainResponse.json();
+      document.getElementById('markdown-content').innerHTML =
+        marked.parse(explanationBody.markdown || 'No explanation available.');
+    } catch (fetchError) {
+      document.getElementById('markdown-content').innerHTML =
+        `<p class="text-red-400">Error: ${fetchError}</p>`;
+    }
+  }
+
+  document.getElementById('close-drawer').addEventListener('click', () => {
+    document.getElementById('explanation-drawer').classList.add('hidden-drawer');
+  });
+
+  document.getElementById('search-input').addEventListener('input', (inputEvent) => {
+    const query = inputEvent.target.value.toLowerCase();
+    if (!query) return;
+    for (const [nodeId, nodeData] of nodeDataMap.entries()) {
+      if (nodeData.label.toLowerCase().includes(query)) {
+        network.focus(nodeId, { scale: 1.5, animation: true });
+        network.selectNodes([nodeId]);
+        break;
+      }
+    }
+  });
+
+  loadGraph();
+</script>
+</body>
+</html>
