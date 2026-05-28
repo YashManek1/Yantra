@@ -79,6 +79,8 @@ fn task_and_truth_types_round_trip_through_serde() {
         TaskId::new(),
         TaskClass::BugFix,
         Strictness::Light,
+        false,
+        [0u8; 32],
         &signing_key_pair,
     )
     .unwrap();

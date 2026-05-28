@@ -23,6 +23,9 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 /// Cooldown period before the circuit transitions from Open to HalfOpen.
+#[cfg(test)]
+const OPEN_COOLDOWN: Duration = Duration::from_millis(50);
+#[cfg(not(test))]
 const OPEN_COOLDOWN: Duration = Duration::from_secs(30);
 
 /// Length of the rolling window used to measure calls per minute.
@@ -68,11 +71,53 @@ impl CircuitBreaker {
         }
     }
 
+    /// Atomically checks if a dispatch is allowed, and if so, records the call.
+    ///
+    /// - `Closed` → always allowed.
+    /// - `Open` → blocked, unless the cooldown has elapsed (transitions to `HalfOpen`).
+    /// - `HalfOpen` → one probe allowed at a time (`probe_in_flight` guard).
+    ///
+    /// Returns `true` if the call was successfully recorded and dispatch can proceed,
+    /// `false` otherwise.
+    pub fn try_dispatch(&self) -> bool {
+        let mut guard = self.inner.lock();
+        Self::advance_state(&mut guard);
+
+        let allowed = match guard.state {
+            CircuitState::Closed => true,
+            CircuitState::Open => false,
+            CircuitState::HalfOpen => !guard.probe_in_flight,
+        };
+
+        if !allowed {
+            return false;
+        }
+
+        let now = Instant::now();
+        guard.recent_call_times.push_back(now);
+        trim_old_entries(&mut guard.recent_call_times);
+
+        if guard.state == CircuitState::HalfOpen {
+            guard.probe_in_flight = true;
+        } else {
+            let current_calls_per_minute = guard.recent_call_times.len() as u32;
+            if guard.state == CircuitState::Closed
+                && current_calls_per_minute >= self.calls_per_minute_limit
+            {
+                guard.state = CircuitState::Open;
+                guard.opened_at = Some(now);
+            }
+        }
+
+        true
+    }
+
     /// Returns `true` when the scheduler is allowed to dispatch a task.
     ///
     /// - `Closed` → always allowed.
     /// - `Open` → blocked, unless the cooldown has elapsed (transitions to `HalfOpen`).
     /// - `HalfOpen` → one probe allowed at a time (`probe_in_flight` guard).
+    #[deprecated(since = "0.1.0", note = "Use `try_dispatch` instead to avoid TOCTOU")]
     pub fn is_dispatch_allowed(&self) -> bool {
         let mut guard = self.inner.lock();
         Self::advance_state(&mut guard);
@@ -88,6 +133,7 @@ impl CircuitBreaker {
     ///
     /// Callers must invoke this immediately after `is_dispatch_allowed` returns
     /// `true`. In `HalfOpen` state this marks the probe as in-flight.
+    #[deprecated(since = "0.1.0", note = "Use `try_dispatch` instead to avoid TOCTOU")]
     pub fn record_call(&self) {
         let mut guard = self.inner.lock();
         let now = Instant::now();
@@ -170,6 +216,7 @@ fn trim_old_entries(recent_call_times: &mut VecDeque<Instant>) {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

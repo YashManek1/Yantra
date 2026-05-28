@@ -4998,6 +4998,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "yantra-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ring",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "yantra-agents",
+ "yantra-core",
+ "yantra-orchestrator",
+ "yantra-stvp",
+ "yantra-tools",
+ "yantra-verifier",
+]
+
+[[package]]
 name = "yantra-lsp"
 version = "0.1.0"
 dependencies = [

@@ -101,6 +101,8 @@ fn make_test_truth_token() -> TruthToken {
         TaskId::new(),
         TaskClass::Docstring,
         Strictness::Trust,
+        false,
+        [0u8; 32],
         &key_pair,
     )
     .unwrap()

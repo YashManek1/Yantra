@@ -440,11 +440,20 @@ pub async fn run_command(
         println!("Applying diffs to disk...");
         let mut apply_error: Option<String> = None;
         for file_diff in &file_diffs {
-            if let Err(err) = apply_diff_to_file(
-                project_root.as_path(),
-                &file_diff.file_path,
-                &file_diff.unified_diff,
+            let canonical_path = match yantra_core::canonicalize_within(
+                &project_root,
+                std::path::Path::new(&file_diff.file_path),
             ) {
+                Ok(path) => path,
+                Err(err) => {
+                    apply_error = Some(format!(
+                        "Path traversal detected or invalid path for {}: {}",
+                        file_diff.file_path, err
+                    ));
+                    break;
+                }
+            };
+            if let Err(err) = apply_diff_to_file(&canonical_path, &file_diff.unified_diff) {
                 apply_error = Some(format!(
                     "Failed to apply diff for {}: {}",
                     file_diff.file_path, err

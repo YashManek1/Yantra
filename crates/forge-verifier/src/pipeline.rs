@@ -68,10 +68,15 @@ impl VerificationPipeline {
         // Gate 1: Truth Drift
         match TruthDriftGate::check(truth, diff)? {
             ValidationResult::Fail(drift_violations) => {
-                return Ok(VerificationResult::Reject {
-                    stage: VerificationStage::TruthDrift,
-                    violations: drift_violations,
-                });
+                let has_blocking = drift_violations
+                    .iter()
+                    .any(|v| v.severity == ViolationSeverity::Error);
+                if has_blocking {
+                    return Ok(VerificationResult::Reject {
+                        stage: VerificationStage::TruthDrift,
+                        violations: drift_violations,
+                    });
+                }
             }
             ValidationResult::Pass => {}
         }

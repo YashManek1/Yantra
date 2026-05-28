@@ -144,10 +144,22 @@ impl SigningKey {
 /// Returns `StvpError::Core` if the Ed25519 signature cannot be converted to
 /// the expected 64-byte array (extremely rare hardware-level failure).
 pub fn issue_token(truth: &SourceTruth, signing_key: &SigningKey) -> Result<TruthToken, StvpError> {
+    let yaml_content = truth.to_yaml()?;
+    let digest_output = ring::digest::digest(&ring::digest::SHA256, yaml_content.as_bytes());
+    let mut content_sha256 = [0u8; 32];
+    content_sha256.copy_from_slice(digest_output.as_ref());
+
+    let sacred_authorized = truth
+        .answers
+        .get("sacred_files")
+        .is_some_and(|list| !list.trim().is_empty());
+
     TruthToken::new(
         truth.task_id,
         truth.task_class,
         truth.strictness,
+        sacred_authorized,
+        content_sha256,
         &signing_key.key_pair,
     )
     .map_err(StvpError::Core)

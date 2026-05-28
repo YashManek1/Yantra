@@ -359,10 +359,9 @@ mod tests {
         let goals = vec![TaskSpec::new("document the twilight phase public types")];
         let ui = MockTwilightUi::new([], vec![], true);
 
-        let night_session =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
-                .await
-                .expect("twilight must succeed");
+        let night_session = run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
+            .await
+            .expect("twilight must succeed");
 
         assert_eq!(night_session.validated_goals.len(), 1);
         assert!(!night_session.night_plan_markdown.is_empty());
@@ -377,8 +376,7 @@ mod tests {
         let goals = vec![TaskSpec::new("document the night mode decision rules")];
         let ui = MockTwilightUi::new([], vec![], false);
 
-        let result =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY).await;
+        let result = run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY).await;
         assert!(
             matches!(result, Err(NightError::TwilightAborted)),
             "expected TwilightAborted, got: {result:?}"
@@ -398,10 +396,9 @@ mod tests {
         let goals = vec![TaskSpec::new("document the forge-night session lifecycle")];
         let ui = MockTwilightUi::new([], decision_rules, true);
 
-        let night_session =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
-                .await
-                .expect("twilight must succeed");
+        let night_session = run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
+            .await
+            .expect("twilight must succeed");
 
         assert_eq!(night_session.decision_rules.len(), 1);
         assert_eq!(night_session.decision_rules[0].priority, 100);
@@ -413,15 +410,9 @@ mod tests {
         let signing_key = SigningKey::load_or_generate(&yantra_dir).unwrap();
 
         let ui = MockTwilightUi::new([], vec![], true);
-        let night_session = run_twilight(
-            vec![],
-            project_root,
-            &signing_key,
-            &ui,
-            NIGHT_POLICY,
-        )
-        .await
-        .expect("empty twilight must succeed");
+        let night_session = run_twilight(vec![], project_root, &signing_key, &ui, NIGHT_POLICY)
+            .await
+            .expect("empty twilight must succeed");
 
         assert!(night_session.validated_goals.is_empty());
         assert!(night_session.night_plan_markdown.contains("Night Plan"));
@@ -438,10 +429,9 @@ mod tests {
         ];
         let ui = MockTwilightUi::new([], vec![], true);
 
-        let night_session =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
-                .await
-                .expect("multi-goal twilight must succeed");
+        let night_session = run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
+            .await
+            .expect("multi-goal twilight must succeed");
 
         assert_eq!(night_session.validated_goals.len(), 2);
         for validated_goal in &night_session.validated_goals {
@@ -461,10 +451,9 @@ mod tests {
         let goals = vec![TaskSpec::new("document the decision rules module")];
         let ui = MockTwilightUi::new([], vec![], true);
 
-        let night_session =
-            run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
-                .await
-                .expect("twilight must succeed");
+        let night_session = run_twilight(goals, project_root, &signing_key, &ui, NIGHT_POLICY)
+            .await
+            .expect("twilight must succeed");
 
         assert_eq!(
             night_session.policy.stvp_strictness,

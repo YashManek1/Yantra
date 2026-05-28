@@ -18,7 +18,7 @@ use ring::signature::{self, Ed25519KeyPair, KeyPair};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
-use crate::id::TaskId;
+use crate::id::{hex_encode, TaskId};
 use crate::task::TaskClass;
 
 /// `STVP` strictness level used to validate a task.
@@ -79,6 +79,10 @@ pub struct TruthToken {
     pub issued_at: DateTime<Utc>,
     /// Validation strictness used to issue the token.
     pub strictness: Strictness,
+    /// Whether this token authorizes sacred file modifications.
+    pub sacred_authorized: bool,
+    /// SHA-256 hash of the source truth YAML content at the time of issuance.
+    pub content_sha256: [u8; 32],
     /// Ed25519 signature over the canonical token payload.
     #[serde(with = "signature_bytes")]
     pub signature: [u8; 64],
@@ -95,10 +99,19 @@ impl TruthToken {
         task_id: TaskId,
         task_class: TaskClass,
         strictness: Strictness,
+        sacred_authorized: bool,
+        content_sha256: [u8; 32],
         signing_key_pair: &Ed25519KeyPair,
     ) -> CoreResult<Self> {
         let issued_at = Utc::now();
-        let payload = canonical_payload(task_id, task_class, issued_at, strictness);
+        let payload = canonical_payload(
+            task_id,
+            task_class,
+            issued_at,
+            strictness,
+            sacred_authorized,
+            &content_sha256,
+        );
         let signature = signing_key_pair.sign(payload.as_bytes());
         let signature_bytes: [u8; 64] = signature
             .as_ref()
@@ -110,6 +123,8 @@ impl TruthToken {
             task_class,
             issued_at,
             strictness,
+            sacred_authorized,
+            content_sha256,
             signature: signature_bytes,
         })
     }
@@ -121,6 +136,8 @@ impl TruthToken {
             self.task_class,
             self.issued_at,
             self.strictness,
+            self.sacred_authorized,
+            &self.content_sha256,
         );
         let public_key =
             signature::UnparsedPublicKey::new(&signature::ED25519, public_key.as_bytes());
@@ -135,13 +152,17 @@ fn canonical_payload(
     task_class: TaskClass,
     issued_at: DateTime<Utc>,
     strictness: Strictness,
+    sacred_authorized: bool,
+    content_sha256: &[u8; 32],
 ) -> String {
     format!(
-        "v1|{}|{}|{}|{}",
+        "v1|{}|{}|{}|{}|{}|{}",
         task_id,
         task_class.as_str(),
         issued_at.timestamp_nanos_opt().unwrap_or_default(),
-        strictness.as_str()
+        strictness.as_str(),
+        sacred_authorized,
+        hex_encode(content_sha256)
     )
 }
 
@@ -186,6 +207,8 @@ mod tests {
             task_id,
             TaskClass::BugFix,
             Strictness::Light,
+            false,
+            [0u8; 32],
             &signing_key_pair,
         )
         .unwrap();

@@ -31,7 +31,7 @@ use yantra_core::{hex_encode, AgentKind, Outcome, SessionId, TaskId, TaskNode, W
 use yantra_router::Router;
 use yantra_tools::McpRouter;
 
-use crate::circuit_breaker::{CircuitBreaker, CircuitState};
+use crate::circuit_breaker::CircuitBreaker;
 use crate::dag::TaskDag;
 use crate::error::OrchestratorError;
 use crate::event_bus::{AgentMessage, EventBus};
@@ -197,9 +197,12 @@ impl Scheduler {
         let results_map = self.inner.task_results.lock();
         let mut execution_results = Vec::new();
         for task_id in expected_task_ids {
-            if let Some(task_result) = results_map.get(&task_id).cloned() {
-                execution_results.push(task_result);
-            }
+            let task_result = results_map.get(&task_id).cloned().ok_or_else(|| {
+                OrchestratorError::ResultMissing {
+                    task_id: task_id.to_string(),
+                }
+            })?;
+            execution_results.push(task_result);
         }
         Ok(execution_results)
     }
@@ -221,11 +224,6 @@ async fn poll_and_dispatch(inner: Arc<SchedulerInner>) {
     }
 
     for task_id in ready_task_ids {
-        if inner.circuit_breaker.current_state() == CircuitState::Open {
-            tracing::debug!(%task_id, "circuit breaker open; deferring dispatch");
-            break;
-        }
-
         let claimed = match inner.dag.try_mark_running(task_id) {
             Ok(claimed) => claimed,
             Err(dag_error) => {
@@ -236,6 +234,12 @@ async fn poll_and_dispatch(inner: Arc<SchedulerInner>) {
 
         if !claimed {
             continue;
+        }
+
+        if !inner.circuit_breaker.try_dispatch() {
+            tracing::debug!(%task_id, "circuit breaker limits reached; rolling back claim");
+            let _ = inner.dag.requeue_for_retry(task_id);
+            break;
         }
 
         let task_node = if let Some(node) = inner.task_store.lock().get(&task_id).cloned() {
@@ -260,11 +264,13 @@ async fn poll_and_dispatch(inner: Arc<SchedulerInner>) {
             continue;
         };
 
-        inner.circuit_breaker.record_call();
-
         let upstream_results: Vec<yantra_agents::TaskResult> = {
             let results_map = inner.task_results.lock();
-            results_map.values().cloned().collect()
+            task_node
+                .dependencies
+                .iter()
+                .filter_map(|dep_id| results_map.get(dep_id).cloned())
+                .collect()
         };
 
         let agent_context = AgentContext {

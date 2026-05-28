@@ -131,12 +131,8 @@ impl FsMcpServer {
         let write_mode = parse_write_mode(mode.as_str())?;
         let canonical_path = canonicalize_within(&self.project_root, requested_path.as_path())?;
 
-        if is_sacred(&self.project_root, requested_path.as_path())?
-            && !has_sacred_authorization(params)
-        {
-            return Err(McpError::forbidden(
-                "sacred file write requires authorization",
-            ));
+        if is_sacred(&self.project_root, requested_path.as_path())? {
+            verify_sacred_authorization(&self.project_root, params)?;
         }
 
         if write_mode == WriteMode::CreateNew && canonical_path.exists() {
@@ -171,12 +167,8 @@ impl FsMcpServer {
         let requested_path = required_path(params)?;
         let canonical_path = canonicalize_within(&self.project_root, requested_path.as_path())?;
 
-        if is_sacred(&self.project_root, requested_path.as_path())?
-            && !has_sacred_authorization(params)
-        {
-            return Err(McpError::forbidden(
-                "sacred file delete requires authorization",
-            ));
+        if is_sacred(&self.project_root, requested_path.as_path())? {
+            verify_sacred_authorization(&self.project_root, params)?;
         }
 
         std::fs::remove_file(&canonical_path).map_err(|source| ToolsError::Io {
@@ -217,24 +209,14 @@ impl FsMcpServer {
     pub fn apply_diff(&self, params: &Value) -> Result<Value, McpError> {
         let requested_path = required_path(params)?;
         let diff_content = required_string(params, "diff")?;
-        let _canonical_path = canonicalize_within(&self.project_root, requested_path.as_path())?;
+        let canonical_path = canonicalize_within(&self.project_root, requested_path.as_path())?;
 
-        if is_sacred(&self.project_root, requested_path.as_path())?
-            && !has_sacred_authorization(params)
-        {
-            return Err(McpError::forbidden(
-                "sacred file write requires authorization",
-            ));
+        if is_sacred(&self.project_root, requested_path.as_path())? {
+            verify_sacred_authorization(&self.project_root, params)?;
         }
 
-        super::diff_apply::apply_diff_to_file(
-            self.project_root.as_path(),
-            requested_path
-                .to_str()
-                .ok_or_else(|| ToolsError::InvalidParams("invalid path".to_owned()))?,
-            &diff_content,
-        )
-        .map_err(McpError::internal)?;
+        super::diff_apply::apply_diff_to_file(&canonical_path, &diff_content)
+            .map_err(McpError::internal)?;
 
         Ok(json!({ "ok": true }))
     }
@@ -290,16 +272,37 @@ fn parse_write_mode(mode: &str) -> Result<WriteMode, ToolsError> {
     }
 }
 
-fn has_sacred_authorization(params: &Value) -> bool {
-    params
-        .get("sacred_authorization")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || params
-            .get("_meta")
-            .and_then(|metadata| metadata.get("sacred_authorization"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
+fn verify_sacred_authorization(project_root: &ProjectRoot, params: &Value) -> Result<(), McpError> {
+    let token_val = params
+        .get("truth_token")
+        .or_else(|| params.get("metadata").and_then(|m| m.get("truth_token")))
+        .or_else(|| params.get("_meta").and_then(|m| m.get("truth_token")))
+        .ok_or_else(|| McpError::forbidden("sacred action requires a truth token"))?;
+
+    let token: yantra_core::truth::TruthToken = serde_json::from_value(token_val.clone())
+        .map_err(|err| McpError::invalid_params(format!("invalid truth token format: {err}")))?;
+
+    if !token.sacred_authorized {
+        return Err(McpError::forbidden(
+            "truth token does not authorize sacred modifications",
+        ));
+    }
+
+    let yantra_dir = project_root.as_path().join(".yantra");
+    let pub_file_path = yantra_dir.join("session.pub");
+    if !pub_file_path.exists() {
+        return Err(McpError::forbidden(
+            "session public key not found; cannot verify token",
+        ));
+    }
+    let public_key_bytes = std::fs::read(&pub_file_path)
+        .map_err(|source| McpError::internal(format!("failed to read session.pub: {source}")))?;
+    let verifying_key = yantra_core::truth::VerifyingKey::new(public_key_bytes);
+    if !token.verify(&verifying_key) {
+        return Err(McpError::forbidden("truth token signature is invalid"));
+    }
+
+    Ok(())
 }
 
 fn write_file_atomically(
