@@ -117,9 +117,7 @@ impl ApprovalGate {
                     KeyCode::Char('y' | 'Y') => break ApprovalDecision::Accept,
                     KeyCode::Char('n' | 'N') => break ApprovalDecision::Reject,
                     KeyCode::Char('e' | 'E') => break ApprovalDecision::Edit,
-                    KeyCode::Char('q' | 'Q') | KeyCode::Esc => {
-                        break ApprovalDecision::Quit
-                    }
+                    KeyCode::Char('q' | 'Q') | KeyCode::Esc => break ApprovalDecision::Quit,
                     _ => {}
                 }
             }

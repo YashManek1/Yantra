@@ -164,16 +164,18 @@ impl DiffPreview {
             enable_raw_mode()?;
 
             let user_accepted = loop {
-                if let Event::Key(key_event) = read()? { match key_event.code {
-                    KeyCode::Char('y' | 'Y') => break true,
-                    KeyCode::Char('n' | 'N') => break false,
-                    KeyCode::Char('e' | 'E') => break true,
-                    KeyCode::Char('q' | 'Q') | KeyCode::Esc => {
-                        disable_raw_mode()?;
-                        return Ok(collected_decisions);
+                if let Event::Key(key_event) = read()? {
+                    match key_event.code {
+                        KeyCode::Char('y' | 'Y') => break true,
+                        KeyCode::Char('n' | 'N') => break false,
+                        KeyCode::Char('e' | 'E') => break true,
+                        KeyCode::Char('q' | 'Q') | KeyCode::Esc => {
+                            disable_raw_mode()?;
+                            return Ok(collected_decisions);
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                } }
+                }
             };
 
             disable_raw_mode()?;
