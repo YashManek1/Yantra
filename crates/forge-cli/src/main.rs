@@ -17,9 +17,12 @@
 //! - `forge-night` — starts Night Mode on `yantra night`
 //! - `forge-serve` — optionally launched for the Live Canvas UI
 
+mod approval;
 mod ask_verifier;
 mod augmenter;
 mod commands;
+mod diff_preview;
+mod tui;
 
 use std::fs;
 use std::io::Write;

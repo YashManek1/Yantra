@@ -43,6 +43,10 @@ serde_json.workspace          = true
 inquire.workspace             = true
 regex.workspace               = true
 uuid.workspace                = true
+yantra-skills.workspace       = true
+ratatui.workspace             = true
+crossterm.workspace           = true
+syntect.workspace             = true
 
 [lints]
 workspace = true
