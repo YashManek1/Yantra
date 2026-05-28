@@ -18,3 +18,15 @@
 //! ## Related
 //! - `forge-orchestrator` — Night Run drives the `DAG` scheduler
 //! - `forge-serve` — streams progress to the Live Canvas during the run
+
+pub mod decision_rules;
+pub mod error;
+pub mod mode_policy;
+pub mod twilight;
+
+pub use decision_rules::{DecisionRule, NightEvent, RuleAction, RuleCondition, RuleEngine};
+pub use error::NightError;
+pub use mode_policy::{
+    ApprovalMode, ModePolicy, SacredPolicy, DAY_POLICY, NIGHT_POLICY, STRICT_POLICY, TRUST_POLICY,
+};
+pub use twilight::{run_twilight, NightSession, TaskSpec, TwilightUi, ValidatedGoal};

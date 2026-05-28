@@ -5033,11 +5033,15 @@ dependencies = [
 name = "yantra-night"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "futures-util",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
  "yantra-core",
  "yantra-orchestrator",
+ "yantra-stvp",
 ]
 
 [[package]]
