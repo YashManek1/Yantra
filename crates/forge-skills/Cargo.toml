@@ -13,6 +13,11 @@ yantra-agents.workspace = true
 yantra-memory.workspace = true
 thiserror.workspace     = true
 tracing.workspace       = true
+serde.workspace         = true
+serde_yaml.workspace    = true
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
 
 [lints]
 workspace = true

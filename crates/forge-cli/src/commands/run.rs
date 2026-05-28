@@ -36,7 +36,13 @@ use yantra_agents::{
     parse_diffs_from_response, Agent, CoderAgent, CommitSigningKey, CommitterAgent, RedTeamAgent,
     ResearcherAgent, VerifierAgent,
 };
-use yantra_core::{AgentKind, ProjectRoot, SessionId, TaskNode, TaskStatus, WorkspaceMode};
+use yantra_core::{
+    AgentKind, ModelTier, ProjectRoot, SessionId, TaskNode, TaskStatus, WorkspaceMode,
+};
+
+use crate::approval::{ApprovalDecision, ApprovalGate, ApprovalKind, ApprovalMode};
+use crate::diff_preview::DiffPreview;
+use crate::tui::RunTui;
 use yantra_crg::{EmbeddingStore, GraphCache};
 use yantra_orchestrator::{CircuitBreaker, EventBus, Orchestrator, Scheduler, TaskDag};
 use yantra_router::routing::RoutedCompletionRequest;
@@ -388,10 +394,25 @@ pub async fn run_command(
         }
     }
 
+    // Show the ratatui TUI startup screen, then restore terminal for streaming.
+    {
+        let tui_session_id = SessionId::new();
+        if let Ok(mut startup_tui) = RunTui::new(tui_session_id) {
+            startup_tui.update_agent(AgentKind::Coder);
+            startup_tui.update_task(&description);
+            startup_tui.update_step("Starting coder pipeline…");
+            startup_tui.update_cost(0.0, ModelTier::Tier0);
+            startup_tui.push_log("Pipeline initialized — awaiting coder output");
+            startup_tui.set_approval_prompt(Some("[y]es [n]o [e]dit [q]uit".to_owned()));
+            let _ = startup_tui.render();
+            // RunTui::drop restores the terminal automatically.
+        }
+    }
+
     let mut retry_count = 0;
     let mut feedback_context: Option<String> = None;
 
-    loop {
+    'coder_retry: loop {
         if retry_count > 0 {
             println!("\nRetrying Coder agent (attempt {}/3)...", retry_count + 1);
         } else {
@@ -437,6 +458,49 @@ pub async fn run_command(
             continue;
         }
 
+        // Hunk-by-hunk approval before writing anything to disk.
+        let is_sacred_diff = truth
+            .answers
+            .get("sacred_files")
+            .is_some_and(|sacred_list| !sacred_list.trim().is_empty());
+        for file_diff in &file_diffs {
+            let write_kind = if is_sacred_diff {
+                ApprovalKind::SacredWrite {
+                    path: file_diff.file_path.clone(),
+                }
+            } else {
+                ApprovalKind::FileWrite {
+                    path: file_diff.file_path.clone(),
+                }
+            };
+            let write_gate = ApprovalGate::new(ApprovalMode::Interactive, write_kind);
+            match write_gate.render_and_wait()? {
+                ApprovalDecision::Accept | ApprovalDecision::Edit => {}
+                ApprovalDecision::Reject | ApprovalDecision::Quit => {
+                    feedback_context = Some("File write rejected by user.".to_owned());
+                    retry_count += 1;
+                    if retry_count > 2 {
+                        anyhow::bail!("Max retries reached after write rejection.");
+                    }
+                    continue 'coder_retry;
+                }
+            }
+
+            let diff_viewer =
+                DiffPreview::new(file_diff.file_path.clone(), file_diff.unified_diff.clone());
+            let hunk_decisions = diff_viewer.preview_and_approve()?;
+            let user_rejected = hunk_decisions.iter().any(|decision| !decision.accepted);
+            if user_rejected {
+                feedback_context =
+                    Some("Some diff hunks were rejected. Revise the implementation.".to_owned());
+                retry_count += 1;
+                if retry_count > 2 {
+                    anyhow::bail!("Max retries reached after diff rejection.");
+                }
+                continue 'coder_retry;
+            }
+        }
+
         println!("Applying diffs to disk...");
         let mut apply_error: Option<String> = None;
         for file_diff in &file_diffs {
@@ -463,6 +527,10 @@ pub async fn run_command(
         }
 
         if let Some(err) = apply_error {
+            if let Ok(mut error_tui) = RunTui::new(SessionId::new()) {
+                error_tui.set_error(format!("Diff apply failed: {err}"));
+                let _ = error_tui.render();
+            }
             println!("Diff application failed: {err}");
             if retry_count >= 2 {
                 if let Ok(memory_service) = yantra_memory::MemoryService::new(&db_path) {
@@ -531,6 +599,21 @@ pub async fn run_command(
                     "{}\n\nTask ID: {}\nOutcome: Success\n",
                     commit_subject, truth.task_id
                 );
+
+                let commit_gate = ApprovalGate::new(
+                    ApprovalMode::Interactive,
+                    ApprovalKind::GitCommit {
+                        message: commit_subject.clone(),
+                    },
+                )
+                .with_cost(0.000_1);
+                match commit_gate.render_and_wait()? {
+                    ApprovalDecision::Accept | ApprovalDecision::Edit => {}
+                    ApprovalDecision::Reject | ApprovalDecision::Quit => {
+                        println!("Git commit declined by user.");
+                        break;
+                    }
+                }
                 let commit_res = git_server.commit(&serde_json::json!({
                     "message": commit_body,
                 }));

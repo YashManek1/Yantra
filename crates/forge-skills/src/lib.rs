@@ -15,3 +15,9 @@
 //! ## Related
 //! - `forge-agents` — retrieves relevant skills before each task
 //! - `forge-memory` — Mistake Library feeds the skill-learning loop
+
+pub mod error;
+pub mod registry;
+
+pub use error::{SkillsError, SkillsResult};
+pub use registry::{AppliesTo, Skill, SkillFrontmatter, SkillRegistry};
