@@ -79,4 +79,33 @@ pub enum NightError {
     /// A git operation via `gitoxide` failed.
     #[error("git operation failed: {0}")]
     GitOperationFailed(String),
+
+    /// Filesystem write for the Dawn Digest report failed.
+    #[error("dawn digest I/O failed at {path}: {reason}")]
+    DigestIo {
+        /// Path that could not be created or written.
+        path: String,
+        /// Human-readable I/O failure reason.
+        reason: String,
+    },
+
+    /// HTTP delivery to a webhook endpoint failed.
+    #[error("webhook delivery failed: {0}")]
+    WebhookDeliveryFailed(String),
+
+    /// Postmortem analysis or Mistake Library write failed.
+    #[error("postmortem failed: {reason}")]
+    PostmortemFailed {
+        /// Human-readable failure reason.
+        reason: String,
+    },
+
+    /// Writing a SKILL.md entry to the skills directory failed.
+    #[error("skill write failed at {path}: {reason}")]
+    SkillWriteFailed {
+        /// Path of the SKILL.md file that could not be written.
+        path: String,
+        /// Human-readable I/O failure reason.
+        reason: String,
+    },
 }

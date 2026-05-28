@@ -12,6 +12,7 @@ yantra-core.workspace         = true
 yantra-orchestrator.workspace = true
 yantra-stvp.workspace         = true
 yantra-obs.workspace          = true
+yantra-memory.workspace       = true
 thiserror.workspace           = true
 tracing.workspace             = true
 tokio.workspace               = true
@@ -21,6 +22,7 @@ serde_json.workspace          = true
 chrono.workspace              = true
 async-trait.workspace         = true
 gix.workspace                 = true
+reqwest                       = { workspace = true }
 
 [dev-dependencies]
 uuid.workspace          = true

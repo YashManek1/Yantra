@@ -132,6 +132,9 @@ pub struct NightReport {
     pub dawn_digest_markdown: String,
     /// Reason the loop terminated.
     pub halt_reason: HaltReason,
+    /// Per-task retry counts: 0 for first-pass completions, >0 for tasks that
+    /// reported internal retries before the outcome was recorded.
+    pub task_retry_counts: HashMap<TaskId, u8>,
 }
 
 /// Internal disposition computed after applying decision rules to an outcome.
@@ -206,6 +209,7 @@ pub async fn run_night(
     let mut completed_task_ids: Vec<TaskId> = Vec::new();
     let mut deferred_task_ids: Vec<TaskId> = Vec::new();
     let mut failed_task_ids: Vec<TaskId> = Vec::new();
+    let mut task_retry_counts: HashMap<TaskId, u8> = HashMap::new();
     let mut total_cost_usd: f32 = 0.0;
     let mut halt_reason = HaltReason::AllTasksComplete;
     let mut night_branches: Vec<(NightBranchRef, String)> = Vec::new();
@@ -280,12 +284,18 @@ pub async fn run_night(
                     let checkpoint = TaskCheckpoint::completed(outcome.task_id, &outcome.summary);
                     let _ = checkpointer.save(&checkpoint);
 
+                    task_retry_counts.insert(outcome.task_id, 0);
                     completed_task_ids.push(outcome.task_id);
                     info!(task_id = %outcome.task_id, summary = %outcome.summary, "task completed");
                 }
                 EffectiveAction::Fail => {
                     dag.mark_failed(outcome.task_id)
                         .map_err(|dag_error| NightError::DagError(dag_error.to_string()))?;
+                    let retry_count_value = match &outcome.disposition {
+                        TaskDisposition::Failed { retry_count, .. } => *retry_count,
+                        _ => 0,
+                    };
+                    task_retry_counts.insert(outcome.task_id, retry_count_value);
                     failed_task_ids.push(outcome.task_id);
                     warn!(task_id = %outcome.task_id, summary = %outcome.summary, "task failed");
                 }
@@ -331,6 +341,7 @@ pub async fn run_night(
         completed_task_ids,
         deferred_task_ids,
         failed_task_ids,
+        task_retry_counts,
         total_cost_usd,
         run_duration,
         dawn_digest_markdown: dawn_digest,
@@ -369,9 +380,7 @@ fn determine_effective_action(
         Some(RuleAction::HardStop { notify }) => EffectiveAction::HardStop { notify: *notify },
         Some(RuleAction::HaltAndDocument) => EffectiveAction::HardStop { notify: false },
         Some(RuleAction::TagWipAndDefer | RuleAction::Wait { .. }) => EffectiveAction::Defer,
-        Some(RuleAction::SkipTask | RuleAction::RebaseAttempt { .. }) => {
-            EffectiveAction::Fail
-        }
+        Some(RuleAction::SkipTask | RuleAction::RebaseAttempt { .. }) => EffectiveAction::Fail,
         None => match &outcome.disposition {
             TaskDisposition::Completed => EffectiveAction::Complete,
             TaskDisposition::Failed { .. } => EffectiveAction::Fail,
