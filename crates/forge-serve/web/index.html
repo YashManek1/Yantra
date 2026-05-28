@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yantra Live Canvas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    #dag-container { height: 280px; border: 1px solid #374151; border-radius: 6px; }
+    .event-item { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-mono text-sm h-screen flex flex-col">
+
+  <!-- Top nav -->
+  <header class="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
+    <div class="flex items-center gap-3">
+      <span class="text-amber-400 font-bold text-base">⚙ Yantra Live Canvas</span>
+      <span id="conn-status" class="flex items-center gap-1 text-xs text-gray-400">
+        <span class="status-dot bg-gray-500" id="conn-dot"></span>
+        <span id="conn-label">connecting…</span>
+      </span>
+    </div>
+    <select id="session-select" class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300">
+      <option value="">Session: all</option>
+    </select>
+  </header>
+
+  <!-- Main two-pane area -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- Left: Agent Activity Stream -->
+    <section class="w-3/5 flex flex-col border-r border-gray-800 overflow-hidden">
+      <div class="px-3 py-1 text-xs text-gray-500 border-b border-gray-800 shrink-0">Agent Activity Stream</div>
+      <ul id="event-list" class="flex-1 overflow-y-auto px-3 py-2 space-y-1"></ul>
+    </section>
+
+    <!-- Right: DAG + File Status -->
+    <section class="w-2/5 flex flex-col overflow-hidden">
+
+      <!-- DAG visualization -->
+      <div class="px-3 py-1 text-xs text-gray-500 border-b border-gray-800 shrink-0">Task DAG</div>
+      <div id="dag-container" class="mx-2 my-2 shrink-0"></div>
+
+      <!-- File tree -->
+      <div class="px-3 py-1 text-xs text-gray-500 border-b border-gray-800 shrink-0">File Status</div>
+      <ul id="file-list" class="flex-1 overflow-y-auto px-3 py-2 space-y-0.5 text-xs"></ul>
+
+    </section>
+  </div>
+
+  <!-- Bottom bar -->
+  <footer class="flex items-center gap-4 px-4 py-2 bg-gray-900 border-t border-gray-800 shrink-0 text-xs">
+    <span class="text-gray-400">Cost: <span id="cost-total" class="text-green-400">$0.0000</span></span>
+    <span class="text-gray-400">Predictions: <span id="speculation" class="text-blue-300">—</span></span>
+    <div class="flex items-center gap-2 ml-auto">
+      <input id="redirect-agent" placeholder="agent-id" class="bg-gray-800 border border-gray-700 rounded px-2 py-1 w-28 text-gray-200 placeholder-gray-600" />
+      <input id="redirect-msg" placeholder="instruction…" class="bg-gray-800 border border-gray-700 rounded px-2 py-1 w-48 text-gray-200 placeholder-gray-600" />
+      <button id="redirect-btn" class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-white font-bold transition-colors">→</button>
+    </div>
+  </footer>
+
+<script>
+  // ── DAG graph (vis.js) ──────────────────────────────────────────────────
+  const dagNodes = new vis.DataSet();
+  const dagEdges = new vis.DataSet();
+  const dagNetwork = new vis.Network(
+    document.getElementById('dag-container'),
+    { nodes: dagNodes, edges: dagEdges },
+    {
+      layout: { hierarchical: { direction: 'LR', sortMethod: 'directed' } },
+      physics: false,
+      nodes: { shape: 'box', font: { color: '#e5e7eb', size: 11 }, color: { background: '#374151', border: '#6b7280' } },
+      edges: { arrows: 'to', color: { color: '#6b7280' } },
+    }
+  );
+
+  const nodeColors = {
+    pending:   { background: '#374151', border: '#6b7280' },
+    running:   { background: '#78350f', border: '#d97706' },
+    completed: { background: '#14532d', border: '#22c55e' },
+    failed:    { background: '#7f1d1d', border: '#ef4444' },
+  };
+
+  function dagUpsertNode(taskId, label, colorKey) {
+    const color = nodeColors[colorKey] || nodeColors.pending;
+    if (dagNodes.get(taskId)) {
+      dagNodes.update({ id: taskId, color });
+    } else {
+      dagNodes.add({ id: taskId, label: label || taskId.slice(0, 8), color });
+    }
+  }
+
+  // ── Event list ──────────────────────────────────────────────────────────
+  const eventList = document.getElementById('event-list');
+  const MAX_EVENTS = 200;
+
+  function appendEvent(eventType, fields) {
+    const colorClass = {
+      task_completed: 'text-green-400',
+      task_failed:    'text-red-400',
+      task_started:   'text-amber-400',
+      circuit_open:   'text-red-500',
+      circuit_closed: 'text-green-500',
+    }[eventType] || 'text-gray-300';
+
+    const fieldText = Object.entries(fields)
+      .map(([key, value]) => `${key}: ${String(value).slice(0, 60)}`)
+      .join('  ');
+
+    const listItem = document.createElement('li');
+    listItem.className = `event-item flex gap-2 ${colorClass}`;
+    listItem.innerHTML = `<span class="shrink-0 text-gray-600">${new Date().toLocaleTimeString()}</span>
+      <span><span class="font-bold">${eventType}</span> <span class="text-gray-400">${fieldText}</span></span>`;
+
+    eventList.prepend(listItem);
+    if (eventList.children.length > MAX_EVENTS) {
+      eventList.removeChild(eventList.lastChild);
+    }
+  }
+
+  // ── File tree ───────────────────────────────────────────────────────────
+  const fileList = document.getElementById('file-list');
+  const fileStatusMap = {};
+
+  function updateFileStatus(filePath, status) {
+    fileStatusMap[filePath] = status;
+    renderFileTree();
+  }
+
+  function renderFileTree() {
+    const colorClass = { written: 'text-green-400', editing: 'text-amber-400', failed: 'text-red-400' };
+    fileList.innerHTML = '';
+    for (const [filePath, fileStatus] of Object.entries(fileStatusMap)) {
+      const listItem = document.createElement('li');
+      listItem.className = `flex gap-2 ${colorClass[fileStatus] || 'text-gray-400'}`;
+      listItem.innerHTML = `<span>●</span><span>${filePath}</span>`;
+      fileList.appendChild(listItem);
+    }
+  }
+
+  // ── Dispatch SSE events to UI ───────────────────────────────────────────
+  function handleSseEvent(eventPayload) {
+    const { event_type, ...eventFields } = eventPayload;
+    appendEvent(event_type, eventFields);
+
+    switch (event_type) {
+      case 'task_queued':
+        dagUpsertNode(eventFields.task_id, eventFields.task_id?.slice(0, 8), 'pending');
+        break;
+      case 'task_started':
+        dagUpsertNode(eventFields.task_id, eventFields.agent_kind, 'running');
+        break;
+      case 'task_completed':
+        dagUpsertNode(eventFields.task_id, eventFields.summary?.slice(0, 16) || 'done', 'completed');
+        break;
+      case 'task_failed':
+      case 'task_max_retries':
+        dagUpsertNode(eventFields.task_id, 'failed', 'failed');
+        break;
+      case 'speculation_ready':
+        document.getElementById('speculation').textContent =
+          eventFields.predictions?.slice(0, 2).join(' · ') || '—';
+        break;
+      case 'cost_update':
+        document.getElementById('cost-total').textContent =
+          '$' + Number(eventFields.total_usd || 0).toFixed(4);
+        break;
+      case 'file_written':
+        if (eventFields.path) updateFileStatus(eventFields.path, 'written');
+        break;
+      case 'file_editing':
+        if (eventFields.path) updateFileStatus(eventFields.path, 'editing');
+        break;
+    }
+  }
+
+  // ── SSE connection with auto-reconnect ──────────────────────────────────
+  const connDot   = document.getElementById('conn-dot');
+  const connLabel = document.getElementById('conn-label');
+  let reconnectDelay = 1000;
+
+  function connect() {
+    const eventSource = new EventSource('/api/stream');
+
+    eventSource.onopen = () => {
+      connDot.className   = 'status-dot bg-green-400';
+      connLabel.textContent = 'connected';
+      reconnectDelay = 1000;
+    };
+
+    eventSource.onmessage = (sseMessage) => {
+      try {
+        handleSseEvent(JSON.parse(sseMessage.data));
+      } catch (_parseError) {
+        // malformed frame — skip silently
+      }
+    };
+
+    eventSource.onerror = () => {
+      connDot.className   = 'status-dot bg-red-400';
+      connLabel.textContent = `reconnecting in ${reconnectDelay / 1000}s…`;
+      eventSource.close();
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
+    };
+  }
+
+  connect();
+
+  // ── Redirect signal ─────────────────────────────────────────────────────
+  document.getElementById('redirect-btn').addEventListener('click', async () => {
+    const agentId     = document.getElementById('redirect-agent').value.trim();
+    const instruction = document.getElementById('redirect-msg').value.trim();
+    if (!agentId || !instruction) return;
+
+    try {
+      const fetchResponse = await fetch(`/api/redirect/${encodeURIComponent(agentId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction }),
+      });
+      const fetchBody = await fetchResponse.json();
+      appendEvent('redirect_sent', { agent_id: agentId, ok: fetchBody.ok ?? false });
+      document.getElementById('redirect-msg').value = '';
+    } catch (fetchError) {
+      appendEvent('redirect_error', { agent_id: agentId, error: String(fetchError) });
+    }
+  });
+
+  // ── Load session list ───────────────────────────────────────────────────
+  async function refreshSessions() {
+    try {
+      const sessionsResponse = await fetch('/api/sessions');
+      const sessionsData = await sessionsResponse.json();
+      const sessionSelect = document.getElementById('session-select');
+      // Keep the "all" option and rebuild the rest
+      while (sessionSelect.options.length > 1) sessionSelect.remove(1);
+      for (const sessionInfo of sessionsData) {
+        const option = document.createElement('option');
+        option.value = sessionInfo.session_id;
+        option.textContent = `Session ${sessionInfo.session_id.slice(0, 8)}`;
+        sessionSelect.appendChild(option);
+      }
+    } catch (_fetchError) {
+      // session list unavailable — not fatal
+    }
+  }
+
+  refreshSessions();
+  setInterval(refreshSessions, 10_000);
+</script>
+</body>
+</html>

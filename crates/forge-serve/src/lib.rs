@@ -11,7 +11,7 @@
 //! - Night Mode progress events from `forge-night`
 //!
 //! ## Output
-//! - `SSE` event stream on `GET /events`
+//! - `SSE` event stream on `GET /api/stream`
 //! - `REST` endpoints for task submission and status polling
 //! - Static assets for the Live Canvas UI
 //!
@@ -19,3 +19,16 @@
 //! - `forge-orchestrator` — primary source of `DAG` state events
 //! - `forge-night` — streams Night Run progress and the Dawn Digest
 //! - `forge-obs` — cost gauge `SSE` updates originate here
+
+pub mod error;
+pub mod redirect;
+pub mod server;
+pub mod session;
+pub mod sse;
+
+pub use error::{ServeError, ServeResult};
+pub use redirect::{redirect_channel, RedirectReceiver, RedirectSender, RedirectSignal};
+pub use server::{build_router, serve, AppState};
+pub use session::{
+    empty_redirect_channels, empty_registry, RedirectChannels, SessionInfo, SessionRegistry,
+};
