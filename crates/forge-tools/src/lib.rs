@@ -31,3 +31,6 @@ pub use tools::diff_apply::apply_diff_to_file;
 pub use tools::fs::FsMcpServer;
 pub use tools::git::GitMcpServer;
 pub use tools::lsp::LspMcpServer;
+pub use tools::merge::MergeMcpServer;
+pub use tools::sacred::SacredGuardServer;
+pub use tools::shell::ShellSandboxServer;

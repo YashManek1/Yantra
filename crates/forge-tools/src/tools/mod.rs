@@ -19,3 +19,6 @@ pub mod diff_apply;
 pub mod fs;
 pub mod git;
 pub mod lsp;
+pub mod merge;
+pub mod sacred;
+pub mod shell;

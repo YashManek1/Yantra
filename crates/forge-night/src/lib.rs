@@ -20,16 +20,24 @@
 //! - `forge-serve` — streams progress to the Live Canvas during the run
 
 pub mod checkpointing;
+pub mod dawn_digest;
 pub mod decision_rules;
 pub mod error;
+pub mod merge;
 pub mod mode_policy;
 pub mod night_branch;
 pub mod night_run;
+pub mod postmortem;
 pub mod twilight;
 
 pub use checkpointing::{Checkpointer, TaskCheckpoint};
+pub use dawn_digest::{
+    generate_digest, notify_webhook, DigestContext, DigestLearnings, DigestMetrics, MarkdownReport,
+    SkillAction, SkillUpdate,
+};
 pub use decision_rules::{DecisionRule, NightEvent, RuleAction, RuleCondition, RuleEngine};
 pub use error::NightError;
+pub use merge::{merge_additive_patches, parse_unified_diff, MergeResult};
 pub use mode_policy::{
     ApprovalMode, ModePolicy, SacredPolicy, DAY_POLICY, NIGHT_POLICY, STRICT_POLICY, TRUST_POLICY,
 };
@@ -39,4 +47,5 @@ pub use night_branch::{
 pub use night_run::{
     run_night, HaltReason, NightReport, TaskDisposition, TaskExecutor, TaskOutcome,
 };
+pub use postmortem::{run_postmortem, PostmortemResult, TaskPostmortemData};
 pub use twilight::{run_twilight, NightSession, TaskSpec, TwilightUi, ValidatedGoal};

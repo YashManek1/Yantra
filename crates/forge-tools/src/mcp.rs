@@ -42,6 +42,8 @@ pub enum ToolCapability {
     GitWrite,
     /// Write files protected by sacred-file policy.
     SacredWrite,
+    /// Execute commands inside an isolated sandbox container.
+    SandboxedExec,
 }
 
 /// Trait implemented by every MCP server in Yantra.

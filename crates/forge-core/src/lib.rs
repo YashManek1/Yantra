@@ -16,6 +16,7 @@
 
 pub mod agent;
 pub mod db;
+pub mod diff;
 pub mod error;
 pub mod id;
 pub mod model;
