@@ -1,0 +1,19 @@
+# Yantra — Default Sacred File Patterns
+#
+# Files matching these patterns require explicit STVP sacred_authorization
+# before any modification. User-project overrides go in .yantra/sacred.txt.
+#
+# Syntax:
+#   src/auth/**          — everything under src/auth/ (recursive)
+#   **/Cargo.toml        — any Cargo.toml in any subdirectory
+#   configs/routing.toml — exact file match
+#   src/payments/**      — recursive directory match
+
+src/auth/**
+src/payments/**
+src/migrations/**
+src/crypto/**
+src/security/**
+configs/**
+.github/workflows/**
+**/Cargo.toml
