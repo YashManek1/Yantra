@@ -38,11 +38,24 @@ pub enum ObsError {
     #[error("timestamp parse error: {0}")]
     Timestamp(#[from] chrono::ParseError),
 
-    /// Global tracing subscriber initialization failed.
-    #[error("tracing subscriber initialization failed")]
+    /// Global tracing subscriber was already initialized by another caller.
+    ///
+    /// `init_tracing()` must be called exactly once per process. Ensure no
+    /// other crate, test harness, or binary entrypoint also calls it.
+    #[error(
+        "tracing subscriber already initialized — \
+         call init_tracing() exactly once per process"
+    )]
     TracingAlreadyInitialized,
 
-    /// Watchdog channel delivery failed.
-    #[error("watchdog channel is closed")]
+    /// The watchdog heartbeat channel closed before the session ended normally.
+    ///
+    /// This usually means the watchdog task panicked or was dropped while the
+    /// orchestrator was still running. Check logs for a prior panic in the
+    /// watchdog thread.
+    #[error(
+        "watchdog heartbeat channel closed — \
+         the watchdog task may have panicked or been dropped prematurely"
+    )]
     WatchdogChannelClosed,
 }
