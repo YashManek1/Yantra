@@ -71,11 +71,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-nextest via binstall
-        uses: cargo-bins/cargo-binstall@main
-
       - name: Install cargo-nextest
-        run: cargo binstall --locked -y cargo-nextest@0.9.106
+        uses: taiki-e/install-action@cargo-nextest
 
       - name: Run tests
         run: cargo nextest run --workspace
@@ -115,11 +112,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-audit via binstall
-        uses: cargo-bins/cargo-binstall@main
-
       - name: Install cargo-audit
-        run: cargo binstall --locked -y cargo-audit
+        uses: taiki-e/install-action@cargo-audit
 
       - name: Audit dependencies
         run: cargo audit
