@@ -22,7 +22,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: '1.86'
           components: llvm-tools-preview
 
       - name: Cache Cargo

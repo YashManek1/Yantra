@@ -19,9 +19,9 @@
 //! - `forge-stvp::error` — surfaces I/O and hash-verification failures
 //! - `forge-core::db` — provides the SQLite connection pool and migration helpers
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, RwLock};
 
 use chrono::{DateTime, Utc};
 use ring::digest;
@@ -169,7 +169,8 @@ fn manifest_db_path(project_root: &ProjectRoot) -> PathBuf {
         .join(MANIFEST_DB_FILE)
 }
 
-static MIGRATION_ONCE: OnceLock<()> = OnceLock::new();
+static APPLIED_MIGRATIONS: LazyLock<RwLock<HashSet<PathBuf>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
 
 fn store_hash(
     project_root: &ProjectRoot,
@@ -186,10 +187,17 @@ fn store_hash(
     let database_pool = connection_pool(&db_path)?;
     let database_guard = database_pool.lock().map_err(|_| StvpError::LockPoisoned)?;
 
-    // VULN-11: apply migration once
-    if MIGRATION_ONCE.get().is_none() {
-        apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
-        let _ = MIGRATION_ONCE.set(());
+    // VULN-11: apply migration once per database path
+    let canonical_db_path = db_path.canonicalize().unwrap_or_else(|_| db_path.clone());
+    let needs_migration = {
+        let read_guard = APPLIED_MIGRATIONS.read().unwrap();
+        !read_guard.contains(&canonical_db_path)
+    };
+    if needs_migration {
+        let mut write_guard = APPLIED_MIGRATIONS.write().unwrap();
+        if write_guard.insert(canonical_db_path) {
+            apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
+        }
     }
 
     let task_id_string = task_id.to_string();
@@ -224,10 +232,17 @@ fn load_hash(project_root: &ProjectRoot, task_id: TaskId) -> Result<String, Stvp
     let database_pool = connection_pool(&db_path)?;
     let database_guard = database_pool.lock().map_err(|_| StvpError::LockPoisoned)?;
 
-    // VULN-11: apply migration once
-    if MIGRATION_ONCE.get().is_none() {
-        apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
-        let _ = MIGRATION_ONCE.set(());
+    // VULN-11: apply migration once per database path
+    let canonical_db_path = db_path.canonicalize().unwrap_or_else(|_| db_path.clone());
+    let needs_migration = {
+        let read_guard = APPLIED_MIGRATIONS.read().unwrap();
+        !read_guard.contains(&canonical_db_path)
+    };
+    if needs_migration {
+        let mut write_guard = APPLIED_MIGRATIONS.write().unwrap();
+        if write_guard.insert(canonical_db_path) {
+            apply_migrations(&database_guard, &[HASH_TABLE_MIGRATION])?;
+        }
     }
 
     let task_id_string = task_id.to_string();
