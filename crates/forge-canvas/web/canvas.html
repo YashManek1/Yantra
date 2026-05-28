@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yantra Canvas — Editor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { margin: 0; }
+    #preview-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+    #preview-frame.selected { outline: 2px solid #f59e0b; }
+    .yantra-highlight { outline: 2px solid #f59e0b !important; outline-offset: -2px; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-mono text-sm h-screen flex flex-col">
+
+  <header class="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
+    <div class="flex items-center gap-3">
+      <span class="text-amber-400 font-bold">⚙ Canvas Editor</span>
+      <span id="project-label" class="text-xs text-gray-400">—</span>
+    </div>
+    <span id="conn-status" class="flex items-center gap-1 text-xs text-gray-400">
+      <span id="conn-dot" class="inline-block w-2 h-2 rounded-full bg-gray-500"></span>
+      <span id="conn-label">connecting…</span>
+    </span>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+
+    <section class="flex-1 bg-white relative overflow-hidden">
+      <iframe id="preview-frame" src="" sandbox="allow-same-origin allow-scripts"></iframe>
+    </section>
+
+    <aside class="w-96 bg-gray-900 border-l border-gray-800 overflow-y-auto p-4 space-y-4">
+
+      <div class="text-xs text-gray-500 uppercase tracking-wider">Selected Element</div>
+      <div id="selection-info" class="space-y-2">
+        <p class="text-gray-400 text-xs">Click on any element in the preview to inspect it.</p>
+      </div>
+
+      <hr class="border-gray-800" />
+
+      <div id="inspector" class="space-y-3 hidden">
+
+        <div>
+          <label class="text-xs text-gray-400 uppercase block mb-1">Text Color</label>
+          <input type="color" id="prop-color" class="w-full h-8 bg-gray-800 rounded border border-gray-700 cursor-pointer" />
+        </div>
+
+        <div>
+          <label class="text-xs text-gray-400 uppercase block mb-1">Background Color</label>
+          <input type="color" id="prop-bg" class="w-full h-8 bg-gray-800 rounded border border-gray-700 cursor-pointer" />
+        </div>
+
+        <div>
+          <label class="text-xs text-gray-400 uppercase block mb-1">Padding (px)</label>
+          <input type="number" id="prop-padding" min="0" max="128" step="4" value="0" class="w-full px-2 py-1 bg-gray-800 rounded border border-gray-700 text-gray-200" />
+        </div>
+
+        <div>
+          <label class="text-xs text-gray-400 uppercase block mb-1">Font Size (px)</label>
+          <input type="number" id="prop-font-size" min="8" max="72" step="1" value="16" class="w-full px-2 py-1 bg-gray-800 rounded border border-gray-700 text-gray-200" />
+        </div>
+
+        <div>
+          <label class="text-xs text-gray-400 uppercase block mb-1">Width (px, blank = auto)</label>
+          <input type="text" id="prop-width" placeholder="auto" class="w-full px-2 py-1 bg-gray-800 rounded border border-gray-700 text-gray-200" />
+        </div>
+
+        <div>
+          <label class="text-xs text-gray-400 uppercase block mb-1">Height (px, blank = auto)</label>
+          <input type="text" id="prop-height" placeholder="auto" class="w-full px-2 py-1 bg-gray-800 rounded border border-gray-700 text-gray-200" />
+        </div>
+
+        <button id="apply-btn" class="w-full mt-2 bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded transition-colors">
+          Apply Changes
+        </button>
+
+      </div>
+
+    </aside>
+
+  </div>
+
+<script>
+  // Project slug from URL path: /editor/<project>
+  const projectSlug = window.location.pathname.split('/').pop();
+  document.getElementById('project-label').textContent = projectSlug;
+
+  let selectedYantraId = null;
+
+  // Preview iframe: load static-rendered preview
+  const previewFrame = document.getElementById('preview-frame');
+  previewFrame.src = `/preview/${encodeURIComponent(projectSlug)}/`;
+
+  previewFrame.addEventListener('load', () => {
+    try {
+      const previewDocument = previewFrame.contentDocument;
+      if (!previewDocument) return;
+      previewDocument.addEventListener('click', async (clickEvent) => {
+        clickEvent.preventDefault();
+        clickEvent.stopPropagation();
+        const target = clickEvent.target.closest('[data-yantra-id]');
+        if (!target) return;
+        const yantraId = target.getAttribute('data-yantra-id');
+        previewDocument.querySelectorAll('.yantra-highlight').forEach(el => el.classList.remove('yantra-highlight'));
+        target.classList.add('yantra-highlight');
+        await selectElement(yantraId);
+      }, true);
+    } catch (frameError) {
+      console.warn('Preview iframe access error:', frameError);
+    }
+  });
+
+  async function selectElement(yantraId) {
+    selectedYantraId = yantraId;
+    const apiResponse = await fetch(`/api/dom/${projectSlug}/select`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({yantra_id: yantraId})
+    });
+    if (!apiResponse.ok) {
+      document.getElementById('selection-info').innerHTML =
+        `<p class="text-red-400 text-xs">Element not found in source.</p>`;
+      document.getElementById('inspector').classList.add('hidden');
+      return;
+    }
+    const elementInfo = await apiResponse.json();
+    document.getElementById('selection-info').innerHTML = `
+      <div class="text-amber-400 font-bold">&lt;${elementInfo.tag}&gt;</div>
+      <div class="text-xs text-gray-400">${elementInfo.component_file}</div>
+      <div class="text-xs text-gray-500">classes: ${elementInfo.classes.join(' ') || '—'}</div>
+    `;
+    document.getElementById('inspector').classList.remove('hidden');
+  }
+
+  document.getElementById('apply-btn').addEventListener('click', async () => {
+    if (!selectedYantraId) return;
+
+    const setStyle = {};
+    const colorValue = document.getElementById('prop-color').value;
+    const bgValue = document.getElementById('prop-bg').value;
+    const paddingValue = document.getElementById('prop-padding').value;
+    const fontSizeValue = document.getElementById('prop-font-size').value;
+    const widthValue = document.getElementById('prop-width').value.trim();
+    const heightValue = document.getElementById('prop-height').value.trim();
+
+    if (colorValue && colorValue !== '#000000') setStyle.color = colorValue;
+    if (bgValue && bgValue !== '#000000') setStyle['background-color'] = bgValue;
+    if (paddingValue && paddingValue !== '0') setStyle.padding = `${paddingValue}px`;
+    if (fontSizeValue && fontSizeValue !== '16') setStyle['font-size'] = `${fontSizeValue}px`;
+    if (widthValue) setStyle.width = widthValue.endsWith('px') || widthValue.endsWith('%') ? widthValue : `${widthValue}px`;
+    if (heightValue) setStyle.height = heightValue.endsWith('px') || heightValue.endsWith('%') ? heightValue : `${heightValue}px`;
+
+    const updateResponse = await fetch(`/api/dom/${projectSlug}/update`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        yantra_id: selectedYantraId,
+        add_classes: [],
+        remove_classes: [],
+        set_style: setStyle
+      })
+    });
+    if (!updateResponse.ok) {
+      const errorBody = await updateResponse.json();
+      alert('Update failed: ' + (errorBody.error || 'unknown'));
+      return;
+    }
+  });
+
+  // WebSocket for hot reload
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  let reconnectDelay = 1000;
+  const connDot = document.getElementById('conn-dot');
+  const connLabel = document.getElementById('conn-label');
+
+  function connectWs() {
+    const socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws/${projectSlug}`);
+    socket.onopen = () => {
+      connDot.className = 'inline-block w-2 h-2 rounded-full bg-green-400';
+      connLabel.textContent = 'connected';
+      reconnectDelay = 1000;
+    };
+    socket.onmessage = (messageEvent) => {
+      try {
+        const message = JSON.parse(messageEvent.data);
+        if (message.type === 'reload') {
+          previewFrame.src = previewFrame.src;
+        }
+      } catch (parseError) {}
+    };
+    socket.onerror = () => socket.close();
+    socket.onclose = () => {
+      connDot.className = 'inline-block w-2 h-2 rounded-full bg-red-400';
+      connLabel.textContent = `reconnecting in ${reconnectDelay / 1000}s…`;
+      setTimeout(connectWs, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    };
+  }
+  connectWs();
+</script>
+</body>
+</html>
