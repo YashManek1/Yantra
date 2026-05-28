@@ -168,10 +168,22 @@ mod tests {
     use super::*;
 
     fn is_docker_available() -> bool {
-        std::process::Command::new("docker")
+        let ps_success = std::process::Command::new("docker")
             .arg("ps")
             .output()
             .map(|output| output.status.success())
+            .unwrap_or(false);
+
+        if !ps_success {
+            return false;
+        }
+
+        std::process::Command::new("docker")
+            .args(["info", "--format", "{{.OSType}}"])
+            .output()
+            .map(|output| {
+                output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "linux"
+            })
             .unwrap_or(false)
     }
 
