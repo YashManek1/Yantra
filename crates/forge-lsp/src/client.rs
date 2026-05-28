@@ -207,10 +207,10 @@ impl LspClient {
 impl Drop for LspClient {
     fn drop(&mut self) {
         if let Err(kill_error) = self.process.start_kill() {
-            tracing::debug!(
+            tracing::warn!(
                 server_binary = %self.server_binary,
-                "LSP server process already exited or kill failed: {}",
-                kill_error
+                error = %kill_error,
+                "LSP server process was already gone or could not be killed on drop"
             );
         }
     }
