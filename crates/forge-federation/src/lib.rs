@@ -16,3 +16,11 @@
 //! ## Related
 //! - `forge-crg` — each member-repo `CRG` feeds into the meta-graph
 //! - `forge-swarm` — federation queries are distributed across workers
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_module_compiles() {
+        // Wave 2 placeholder: compile-check only.
+    }
+}

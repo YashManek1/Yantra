@@ -169,6 +169,31 @@
     }
   });
 
+  // Surgical component swap: update only the element identified by yantraId
+  // without reloading the whole preview iframe.
+  function applyComponentSwap(yantraId, componentHtml) {
+    try {
+      const previewDocument = previewFrame.contentDocument;
+      if (!previewDocument) {
+        previewFrame.src = previewFrame.src;
+        return;
+      }
+      const targetElement = previewDocument.querySelector(`[data-yantra-id="${yantraId}"]`);
+      if (!targetElement) {
+        previewFrame.src = previewFrame.src;
+        return;
+      }
+      const swapContainer = previewDocument.createElement('div');
+      swapContainer.innerHTML = componentHtml;
+      const replacementElement = swapContainer.firstElementChild;
+      if (replacementElement) {
+        targetElement.replaceWith(replacementElement);
+      }
+    } catch (swapError) {
+      previewFrame.src = previewFrame.src;
+    }
+  }
+
   // WebSocket for hot reload
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   let reconnectDelay = 1000;
@@ -185,8 +210,8 @@
     socket.onmessage = (messageEvent) => {
       try {
         const message = JSON.parse(messageEvent.data);
-        if (message.type === 'reload') {
-          previewFrame.src = previewFrame.src;
+        if (message.type === 'component_swap') {
+          applyComponentSwap(message.yantra_id, message.component_html);
         }
       } catch (parseError) {}
     };

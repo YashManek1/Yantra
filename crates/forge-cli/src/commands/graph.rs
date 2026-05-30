@@ -32,7 +32,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Terminal;
 use rusqlite::{Connection, OpenFlags};
-use yantra_crg::GraphCache;
+use yantra_crg::{community_label, GraphCache};
 
 /// Top-line CRG statistics shown in the dashboard header bar.
 struct GraphStats {
@@ -332,47 +332,9 @@ fn compute_hubs(graph_cache: &GraphCache) -> Vec<HubEntry> {
     hubs
 }
 
-/// Normalizes a file path's separators and returns its leading meaningful
-/// directory segment: the first non-empty segment that is neither `src` nor a
-/// dotfile/dot-directory, falling back to `"root"`.
-fn community_label(file_path: &str) -> String {
-    let normalized = file_path.replace('\\', "/");
-    for segment in normalized.split('/') {
-        if segment.is_empty() || segment == "src" || segment.starts_with('.') {
-            continue;
-        }
-        return segment.to_owned();
-    }
-    "root".to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn community_label_skips_src_and_dot_segments() {
-        assert_eq!(community_label("crates/forge-crg/src/lib.rs"), "crates");
-        assert_eq!(community_label("src/forge-cli/main.rs"), "forge-cli");
-        assert_eq!(community_label(".github/workflows/ci.yml"), "workflows");
-    }
-
-    #[test]
-    fn community_label_normalizes_backslashes() {
-        assert_eq!(community_label("crates\\forge-crg\\src\\lib.rs"), "crates");
-    }
-
-    #[test]
-    fn community_label_falls_back_to_root_when_only_src_or_dot_segments() {
-        assert_eq!(community_label("src"), "root");
-        assert_eq!(community_label("src/.cache"), "root");
-        assert_eq!(community_label(""), "root");
-    }
-
-    #[test]
-    fn community_label_returns_bare_file_as_its_own_community() {
-        assert_eq!(community_label("main.rs"), "main.rs");
-    }
 
     #[test]
     fn compute_hubs_sorts_by_connectivity_descending() {

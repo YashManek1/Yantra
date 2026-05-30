@@ -1,9 +1,9 @@
 //! # forge-crg::export: vis.js-shaped Graph JSON
 //!
 //! Exports a `GraphCache` into the JSON shape expected by the browser CRG
-//! viewer. Each node carries a community ID (derived from its top-level
-//! directory for Phase 1; richer Louvain detection comes in Phase 2) and a
-//! hub score (the precomputed `connectivity_score`).
+//! viewer. Each node carries a community ID assigned by the Louvain community
+//! detection algorithm (single-pass modularity optimisation) and a hub score
+//! derived from the precomputed `connectivity_score`.
 //!
 //! ## Input
 //! - `GraphCache` — full or focused symbol cache
@@ -13,6 +13,7 @@
 //! - `GraphJson { nodes, edges }` — directly serializable as vis.js data
 //!
 //! ## Related
+//! - `forge-crg::louvain` — provides the community assignment map
 //! - `forge-crg::subgraph::GraphCache` — input source
 //! - `forge-canvas::graph_viz` — primary downstream consumer
 
@@ -22,6 +23,7 @@ use std::str::FromStr;
 use serde::Serialize;
 use yantra_core::SymbolId;
 
+use crate::louvain::detect_communities;
 use crate::subgraph::{EdgeDetails, GraphCache, SymbolDetails};
 
 /// Serializable graph payload for vis.js / d3.
@@ -113,11 +115,20 @@ pub fn export_focused(
 }
 
 fn build_payload(cache: &GraphCache, included_ids: &HashSet<String>) -> GraphJson {
+    let louvain_assignment = detect_communities(cache);
+
     let community_for: HashMap<String, String> = cache
         .symbol_details
         .iter()
         .filter(|(symbol_id, _)| included_ids.contains(&symbol_id.to_string()))
-        .map(|(symbol_id, details)| (symbol_id.to_string(), community_label(&details.file_path)))
+        .map(|(symbol_id, details)| {
+            let id_string = symbol_id.to_string();
+            let community = louvain_assignment
+                .get(&id_string)
+                .cloned()
+                .unwrap_or_else(|| community_label(&details.file_path));
+            (id_string, community)
+        })
         .collect();
 
     let mut nodes: Vec<GraphNodeJson> = cache
@@ -184,7 +195,10 @@ fn edge_for(edge: &EdgeDetails) -> GraphEdgeJson {
     }
 }
 
-fn community_label(file_path: &str) -> String {
+/// Derives a short community name from a file path by returning the first
+/// path segment that is neither empty, `"src"`, nor a dotfile prefix.
+/// Falls back to `"root"` when no meaningful segment exists.
+pub fn community_label(file_path: &str) -> String {
     let normalized = file_path.replace('\\', "/");
     normalized
         .split('/')

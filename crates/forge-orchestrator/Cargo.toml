@@ -33,6 +33,12 @@ yantra-agents.workspace = true
 chrono.workspace        = true
 async-trait.workspace   = true
 proptest.workspace      = true
+criterion.workspace     = true
+
+[[bench]]
+name    = "orchestrator_bench"
+path    = "benches/orchestrator_bench.rs"
+harness = false
 
 [lints]
 workspace = true

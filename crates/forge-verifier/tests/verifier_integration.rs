@@ -57,6 +57,7 @@ fn nonexistent_ctx() -> VerificationContext {
         project_root: std::env::temp_dir(),
         is_sacred_diff: false,
         crg_db_path: None,
+        lsp_bridge: None,
     }
 }
 

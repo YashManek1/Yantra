@@ -93,7 +93,7 @@ impl VerificationPipeline {
         }
 
         // Hallucination cross-check (advisory — only blocks on Error severity)
-        let hallucination_violations = check_hallucination(diff, ctx)?;
+        let hallucination_violations = check_hallucination(diff, ctx).await?;
         let blocking_hallucinations: Vec<Violation> = hallucination_violations
             .into_iter()
             .filter(|violation| violation.severity == ViolationSeverity::Error)
@@ -205,6 +205,7 @@ mod tests {
             project_root: PathBuf::from("/nonexistent"),
             is_sacred_diff: false,
             crg_db_path: None,
+            lsp_bridge: None,
         }
     }
 

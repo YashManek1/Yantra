@@ -44,11 +44,15 @@ pub use event_bus::{AgentMessage, EventBus};
 pub use scheduler::Scheduler;
 pub use speculation_engine::{SpeculatedTask, SpeculationEngine};
 
-/// Orchestrates task execution behind an STVP token gate.
+/// STVP token gate and task staging queue.
 ///
 /// Every call to `schedule_task` verifies the task's `TruthToken` signature
-/// against the session public key before enqueuing the task. Tasks without a
+/// against the session public key before staging the task. Tasks without a
 /// token or with an invalid signature are rejected immediately.
+///
+/// After staging, use `drain_into_scheduler` to transfer all queued tasks into
+/// a `Scheduler` for actual execution, or use `Scheduler` directly for the
+/// multi-agent DAG path (see `forge-cli::commands::run`).
 ///
 /// The full DAG scheduler, event bus, circuit breaker, CSP planner, and
 /// speculation engine are available as standalone composable types in the
@@ -111,6 +115,35 @@ impl Orchestrator {
     /// Returns a snapshot of all tasks currently in the queue.
     pub fn queued_tasks(&self) -> Vec<TaskNode> {
         self.queue.lock().unwrap().clone()
+    }
+
+    /// Drains all queued tasks into `scheduler` by registering each one.
+    ///
+    /// After this call the queue is empty. Tasks that fail `Scheduler::register_task`
+    /// are logged as errors and skipped so that valid tasks still proceed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SchedulingError::TokenVerificationFailed` if the mutex is poisoned.
+    pub fn drain_into_scheduler(&self, scheduler: &Scheduler) -> Result<(), SchedulingError> {
+        let mut queue_guard =
+            self.queue
+                .lock()
+                .map_err(|_| SchedulingError::TokenVerificationFailed {
+                    task_id: "unknown".to_owned(),
+                    source: yantra_stvp::StvpError::LockPoisoned,
+                })?;
+        for task_node in queue_guard.drain(..) {
+            let task_id_string = task_node.id.to_string();
+            if let Err(scheduling_error) = scheduler.register_task(task_node) {
+                tracing::error!(
+                    task_id = %task_id_string,
+                    error = ?scheduling_error,
+                    "Orchestrator::drain_into_scheduler: failed to register task"
+                );
+            }
+        }
+        Ok(())
     }
 }
 

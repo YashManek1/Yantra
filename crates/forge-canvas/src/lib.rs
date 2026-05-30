@@ -21,6 +21,7 @@
 //! - `forge-crg::export` — produces vis.js-shaped graph JSON
 //! - `forge-tools::FsMcpServer` — sacred-file-gated write target for TSX edits
 
+pub mod assets;
 pub mod clone;
 pub mod css_to_tailwind;
 pub mod dom;
@@ -31,7 +32,8 @@ pub mod server;
 pub mod tsx_writer;
 pub mod ws;
 
-pub use clone::{clone_url, ClonedSite};
+pub use assets::{download_assets, AssetManifest};
+pub use clone::{clone_url, crawl_site, try_render_js_html, ClonedSite};
 pub use css_to_tailwind::{css_props_to_tailwind, CssDeclaration, TailwindTranslation};
 pub use dom::{DomNode, DomTree, YantraId};
 pub use editor::{apply_update, ProjectHandle, ProjectRegistry, PropertyUpdate};

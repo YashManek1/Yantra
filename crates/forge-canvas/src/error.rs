@@ -71,6 +71,14 @@ pub enum CanvasError {
         yantra_id: String,
     },
 
+    /// Undo was requested but the undo stack for the project is empty.
+    #[error("no edits to undo for project {0:?}")]
+    EmptyUndoStack(String),
+
+    /// Redo was requested but the redo stack for the project is empty.
+    #[error("no edits to redo for project {0:?}")]
+    EmptyRedoStack(String),
+
     /// JSON serialization or deserialization failed.
     #[error("JSON conversion failed: {0}")]
     Json(String),
@@ -83,6 +91,18 @@ pub enum CanvasError {
         /// Underlying I/O error.
         source: std::io::Error,
     },
+
+    /// Downloading or saving an asset (image, font) to `public/` failed.
+    #[error("asset download failed: {0}")]
+    AssetDownloadFailed(String),
+
+    /// Headless browser rendering failed (only possible with `render-js` feature).
+    #[error("JS render failed: {0}")]
+    RenderJsFailed(String),
+
+    /// The provided URL could not be parsed.
+    #[error("invalid URL: {0}")]
+    InvalidUrl(String),
 }
 
 /// Convenience alias for results returned from canvas APIs.

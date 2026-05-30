@@ -4,9 +4,13 @@
 //! ratatui for the interactive terminal UI. Delegates all runtime logic to
 //! `forge-orchestrator`, `forge-night`, and `forge-canvas`.
 //!
+//! **Recommended entry point:** `yantra start` — boots all services and provides
+//! an interactive shell (no args) or a guided 6-step pipeline (with a task arg).
+//! All other subcommands remain available for power-user direct invocation.
+//!
 //! ## Input
-//! - CLI arguments: subcommand (index, ask, run, canvas, graph, observe), flags
-//! - Interactive terminal input during `STVP` questionnaires
+//! - CLI arguments: subcommand + flags
+//! - Interactive terminal input during STVP questionnaires
 //!
 //! ## Output
 //! - Terminal UI rendered via ratatui
@@ -14,8 +18,9 @@
 //!
 //! ## Related
 //! - `forge-orchestrator` — receives task submissions
-//! - `forge-night` — starts Night Mode on `yantra night`
-//! - `forge-canvas` — hosts the visual canvas editor and CRG graph viewer
+//! - `forge-night` — autonomous Night Mode with Dawn Digest
+//! - `forge-canvas` — visual canvas editor and CRG graph viewer
+//! - `forge-cli::commands::start` — unified product entrypoint
 
 mod approval;
 mod ask_verifier;
@@ -77,6 +82,68 @@ struct BudgetConfig {
     kill_usd: f32,
 }
 
+/// Serializable snapshot of the most recent session's status, used by `yantra status`.
+#[derive(Debug, serde::Serialize)]
+struct StatusSnapshot {
+    session_id: Option<String>,
+    total_spans: i64,
+    cumulative_cost_usd: f64,
+    status: String,
+}
+
+impl StatusSnapshot {
+    /// Constructs an empty snapshot (no sessions found) with status `"Ok"`.
+    fn empty(cost_thresholds: &CostThresholds) -> Self {
+        Self {
+            session_id: None,
+            total_spans: 0,
+            cumulative_cost_usd: 0.0,
+            status: classify_cost_status(0.0, cost_thresholds).to_string(),
+        }
+    }
+}
+
+/// Classifies a cumulative cost value into a human-readable status label.
+fn classify_cost_status(
+    cumulative_cost_usd: f64,
+    cost_thresholds: &CostThresholds,
+) -> &'static str {
+    if cumulative_cost_usd >= f64::from(cost_thresholds.kill) {
+        "Kill"
+    } else if cumulative_cost_usd >= f64::from(cost_thresholds.hard) {
+        "Pause"
+    } else if cumulative_cost_usd >= f64::from(cost_thresholds.soft) {
+        "Warn"
+    } else {
+        "Ok"
+    }
+}
+
+/// Prints the status snapshot either as JSON or as a plain-text table.
+///
+/// # Errors
+///
+/// Returns `anyhow::Error` if JSON serialization fails.
+fn print_status_snapshot(snapshot: &StatusSnapshot, as_json: bool) -> anyhow::Result<()> {
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(snapshot)?);
+        return Ok(());
+    }
+
+    match &snapshot.session_id {
+        Some(session_id) => {
+            println!("Active Session: {session_id}");
+            println!("Total Spans: {}", snapshot.total_spans);
+        }
+        None => {
+            println!("No active sessions found.");
+        }
+    }
+    println!("Cumulative Cost: ${:.6}", snapshot.cumulative_cost_usd);
+    println!("Status: {}", snapshot.status);
+    Ok(())
+}
+
 #[derive(Parser)]
 #[command(
     name = "yantra",
@@ -112,6 +179,10 @@ enum Commands {
         /// Port for the local canvas server
         #[arg(long, default_value_t = 8088)]
         port: u16,
+        /// Use headless Chromium to execute JavaScript before cloning
+        /// (requires the `render-js` feature to be compiled in)
+        #[arg(long, default_value_t = false)]
+        render_js: bool,
     },
     /// Opens the CRG dashboard TUI (press `g` for the browser graph viewer)
     Graph {
@@ -125,7 +196,29 @@ enum Commands {
     /// Opens the live observability TUI backed by `.yantra/traces.sqlite`
     Observe,
     /// Prints cost gauge and active session info
-    Status,
+    Status {
+        /// Output as JSON instead of a formatted table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Shows the token ledger for a task description (Context Lens)
+    Context(commands::context::ContextArgs),
+    /// Runs preflight health checks for the Yantra runtime environment
+    Doctor(commands::doctor::DoctorArgs),
+    /// Runs the autonomous Night Mode pipeline (Twilight → Night Run → Dawn Digest)
+    Night {
+        /// Comma-separated task descriptions to plan (interactive prompt when omitted)
+        #[arg(long, value_delimiter = ',')]
+        tasks: Vec<String>,
+        /// Skip LLM calls — use the no-op dry-run executor for smoke testing
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
+    /// Unified entry point: interactive shell (no task) or guided pipeline (with task)
+    Start {
+        /// Optional task description — triggers the 6-step guided pipeline when provided
+        task: Option<String>,
+    },
     /// Prints the current version
     Version,
 }
@@ -296,11 +389,11 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let routing_policy = RoutingPolicy::from_file(config_file_path).unwrap_or_default();
-    let router = Router::new(routing_policy, model_providers);
+    let router = Arc::new(Router::new(routing_policy, model_providers));
 
     match cli_arguments.command {
         Commands::Run { description } => {
-            commands::run::run_command(description, project_root, Arc::new(router)).await?;
+            commands::run::run_command(description, project_root, router.clone()).await?;
         }
         Commands::Index { path } => {
             let target_path_str = path.unwrap_or_else(|| ".".to_string());
@@ -522,8 +615,12 @@ async fn main() -> anyhow::Result<()> {
             };
             record_span(&trace_connection, &span_record)?;
         }
-        Commands::Canvas { url, port } => {
-            commands::canvas::canvas_command(url, port).await?;
+        Commands::Canvas {
+            url,
+            port,
+            render_js,
+        } => {
+            commands::canvas::canvas_command(url, port, render_js, router.clone()).await?;
         }
         Commands::Graph { focus, port } => {
             let crg_database_path = project_root.as_path().join(".yantra").join("crg.sqlite");
@@ -538,27 +635,33 @@ async fn main() -> anyhow::Result<()> {
             };
             commands::observe::observe_command(trace_database_path, cost_thresholds).await?;
         }
-        Commands::Status => {
+        Commands::Status { json } => {
             let trace_database_path = project_root.as_path().join(".yantra").join("traces.sqlite");
+            let cost_thresholds = CostThresholds {
+                soft: routing_config.budget.soft_usd,
+                hard: routing_config.budget.hard_usd,
+                kill: routing_config.budget.kill_usd,
+            };
+
             if !trace_database_path.exists() {
-                println!("No active sessions found (traces database does not exist).");
-                println!("Cumulative Cost: $0.000000");
-                println!("Status: Ok");
+                let empty_status = StatusSnapshot::empty(&cost_thresholds);
+                print_status_snapshot(&empty_status, json)?;
                 return Ok(());
             }
 
             let trace_connection = rusqlite::Connection::open(&trace_database_path)?;
 
-            let table_exists: bool = trace_connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='spans')",
-                [],
-                |row| row.get(0),
-            ).unwrap_or(false);
+            let table_exists: bool = trace_connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='spans')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
 
             if !table_exists {
-                println!("No active sessions found (traces database is empty).");
-                println!("Cumulative Cost: $0.000000");
-                println!("Status: Ok");
+                let empty_status = StatusSnapshot::empty(&cost_thresholds);
+                print_status_snapshot(&empty_status, json)?;
                 return Ok(());
             }
 
@@ -572,33 +675,30 @@ async fn main() -> anyhow::Result<()> {
                 let spans_count: i64 = row.get(2)?;
 
                 let parsed_session_id = SessionId::from_str(&session_id_str)?;
-                let cost_thresholds = CostThresholds {
-                    soft: routing_config.budget.soft_usd,
-                    hard: routing_config.budget.hard_usd,
-                    kill: routing_config.budget.kill_usd,
+                let status_label = classify_cost_status(total_cost, &cost_thresholds);
+                let status_snapshot = StatusSnapshot {
+                    session_id: Some(parsed_session_id.to_string()),
+                    total_spans: spans_count,
+                    cumulative_cost_usd: total_cost,
+                    status: status_label.to_string(),
                 };
-
-                // Print session information
-                println!("Active Session: {parsed_session_id}");
-                println!("Total Spans: {spans_count}");
-                println!("Cumulative Cost: ${total_cost:.6}");
-
-                // Cost status classification
-                let status_label = if total_cost >= f64::from(cost_thresholds.kill) {
-                    "Kill"
-                } else if total_cost >= f64::from(cost_thresholds.hard) {
-                    "Pause"
-                } else if total_cost >= f64::from(cost_thresholds.soft) {
-                    "Warn"
-                } else {
-                    "Ok"
-                };
-                println!("Status: {status_label}");
+                print_status_snapshot(&status_snapshot, json)?;
             } else {
-                println!("No spans found in traces database.");
-                println!("Cumulative Cost: $0.000000");
-                println!("Status: Ok");
+                let empty_status = StatusSnapshot::empty(&cost_thresholds);
+                print_status_snapshot(&empty_status, json)?;
             }
+        }
+        Commands::Context(context_args) => {
+            commands::context::run_context(context_args).await?;
+        }
+        Commands::Doctor(doctor_args) => {
+            commands::doctor::run_doctor(doctor_args).await?;
+        }
+        Commands::Night { tasks, dry_run } => {
+            commands::night::night_command(tasks, dry_run, router.clone(), project_root).await?;
+        }
+        Commands::Start { task } => {
+            commands::start::start_command(task, router.clone(), project_root).await?;
         }
         Commands::Version => {
             println!("yantra 0.1.0");

@@ -1,20 +1,23 @@
 //! # forge-canvas::graph_viz: CRG Graph Endpoints
 //!
-//! Lazy-loads `.yantra/crg.sqlite` on first request, serves the
-//! vis.js-shaped graph JSON, and answers LLM explanation requests by
-//! routing through the existing `yantra-router` at `ModelTier::Tier0`.
+//! Lazy-loads `.yantra/crg.sqlite` on first request, serves the vis.js-shaped
+//! graph JSON, and answers LLM explanation requests by routing through the
+//! `yantra-router` at `ModelTier::Tier0`. Falls back to a structural summary
+//! when no router is wired (offline / no provider configured).
 //!
 //! ## Input
 //! - `AppState.graph` — `GraphState` with optional cached `GraphCache`
+//! - `AppState.router` — optional `Arc<Router>` for LLM explain calls
 //! - `?focus=<symbol_id>` query for subgraph extraction
 //!
 //! ## Output
 //! - `GET  /api/graph/json` → `GraphJson` (vis.js nodes + edges)
-//! - `POST /api/graph/explain` → `{markdown}` with LLM-generated text
+//! - `POST /api/graph/explain` → `{markdown}` with LLM-generated explanation
+//!   or structural fallback when offline
 //!
 //! ## Related
 //! - `forge-crg::export` — produces the JSON shape
-//! - `forge-router::Router` — Tier 0 call target for explanations
+//! - `forge-router::Router` — Tier 0 call target for LLM explanations
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,6 +29,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use yantra_crg::{export_focused, export_graph, GraphCache};
+
+use yantra_core::ModelTier;
+use yantra_router::{CompletionRequest, Message, MessageRole, RoutedCompletionRequest};
 
 use crate::server::AppState;
 
@@ -139,10 +145,11 @@ pub struct ExplainResponse {
 
 /// Axum handler for `POST /api/graph/explain`.
 ///
-/// Phase 1: returns a structural summary built directly from `GraphCache`
-/// (no LLM call). The Tier 0 LLM-assisted variant is Phase 2 — wiring the
-/// `Router` requires loading `configs/routing.toml`, which the canvas
-/// server does not own today.
+/// When a model router is wired into `AppState`, calls the router at
+/// `ModelTier::Tier0` (Ollama) with a prompt that includes the structural
+/// summary as context and requests a natural-language explanation. Falls back
+/// gracefully to the structural summary when no router is present (offline) or
+/// when the LLM call fails, so the endpoint is always available.
 pub async fn graph_explain_handler(
     State(state): State<AppState>,
     Json(request): Json<ExplainRequest>,
@@ -161,7 +168,7 @@ pub async fn graph_explain_handler(
         }
     };
 
-    let markdown_text = match build_structural_summary(&cache, &request.symbol_id) {
+    let structural_summary = match build_structural_summary(&cache, &request.symbol_id) {
         Some(text) => text,
         None => {
             return (
@@ -172,10 +179,68 @@ pub async fn graph_explain_handler(
         }
     };
 
+    let markdown_text = if let Some(model_router) = state.router.as_ref() {
+        let explanation =
+            call_llm_for_explanation(model_router.as_ref(), &structural_summary).await;
+        explanation.unwrap_or(structural_summary)
+    } else {
+        structural_summary
+    };
+
     Json(ExplainResponse {
         markdown: markdown_text,
     })
     .into_response()
+}
+
+/// Calls the router at Tier 0 to produce an LLM-generated explanation.
+///
+/// Returns `None` when no Tier 0 provider is available or the call fails,
+/// so the caller can fall back to the structural summary.
+async fn call_llm_for_explanation(
+    model_router: &yantra_router::Router,
+    structural_summary: &str,
+) -> Option<String> {
+    let system_prompt = "You are a code-graph assistant. Given a structural summary of a Rust \
+        symbol from the Yantra codebase, write a clear, concise Markdown explanation (2-4 \
+        paragraphs) aimed at an engineer who wants to understand the symbol's purpose, how it \
+        fits into the system, and any important caveats. Do not repeat the raw structural data \
+        verbatim; synthesise it into readable prose.";
+
+    let user_prompt = format!("Explain the following symbol:\n\n{structural_summary}");
+
+    let completion_request = CompletionRequest {
+        messages: vec![
+            Message {
+                role: MessageRole::System,
+                content: system_prompt.to_owned(),
+                tool_calls: Vec::new(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: user_prompt,
+                tool_calls: Vec::new(),
+            },
+        ],
+        max_tokens: Some(512),
+        temperature: 0.3,
+        tools: None,
+        stop_sequences: Vec::new(),
+    };
+
+    let routed_request = RoutedCompletionRequest {
+        required_tier: ModelTier::Tier0,
+        completion_request: completion_request.clone(),
+    };
+
+    let provider = model_router.route(&routed_request).await.ok()?;
+    let response = provider.complete(completion_request).await.ok()?;
+    let explanation_text = response.content.trim().to_owned();
+    if explanation_text.is_empty() {
+        None
+    } else {
+        Some(explanation_text)
+    }
 }
 
 fn build_structural_summary(cache: &GraphCache, symbol_id_str: &str) -> Option<String> {

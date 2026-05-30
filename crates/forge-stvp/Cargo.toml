@@ -22,5 +22,14 @@ rusqlite.workspace      = true
 toml                    = "0.8"
 tokio.workspace         = true
 
+[dev-dependencies]
+criterion.workspace = true
+chrono.workspace    = true
+
+[[bench]]
+name    = "stvp_bench"
+path    = "benches/stvp_bench.rs"
+harness = false
+
 [lints]
 workspace = true

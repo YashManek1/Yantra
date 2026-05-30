@@ -32,17 +32,39 @@ If you wonder why any design decision was made, the answer is almost always one 
 ## Quickstart
 
 ```bash
-# Index your repo (builds crg.sqlite + embeddings)
+# ── Recommended: one command to start everything ─────────────────────────────
+
+# Interactive shell (boots runtime, drops into REPL: index/ask/run/night/…)
+cargo run --bin yantra -- start
+
+# Guided 6-step pipeline for a single task
+cargo run --bin yantra -- start "add JWT rotation"
+
+# ── Direct subcommands (power users / CI) ─────────────────────────────────────
+
+# 1. Index your repo (builds crg.sqlite + embeddings)
 cargo run --bin yantra -- index .
 
-# Ask a question about the codebase
+# 2. Ask a question about the codebase
 cargo run --bin yantra -- ask "What does the VerifierAgent do?"
 
-# Run a task with full STVP verification
+# 3. Run a task with full STVP + multi-agent DAG
 cargo run --bin yantra -- run "add JWT rotation"
 
-# Start Night Mode (autonomous 8-hour run)
-cargo run --bin yantra -- night
+# 4. Night Mode (Twilight → autonomous run → Dawn Digest)
+cargo run --bin yantra -- night --tasks "add retry logic,fix auth bug"
+
+#    Dry-run Night Mode (no LLM calls — smoke test)
+cargo run --bin yantra -- night --dry-run
+
+# 5. Visual canvas editor (clone + edit any website in-browser)
+cargo run --bin yantra -- canvas https://example.com
+
+# 6. CRG graph viewer in-browser (Louvain community detection)
+cargo run --bin yantra -- graph --focus MyStruct
+
+# 7. Live observability TUI (spans, cost gauge, anomaly alerts)
+cargo run --bin yantra -- observe
 ```
 
 ---
@@ -53,7 +75,7 @@ cargo run --bin yantra -- night
 graph TB
     subgraph "User Surfaces"
         CLI[CLI · ratatui]
-        WEB[Live Canvas · Axum+SSE]
+        WEB[Visual Canvas · Axum+WS]
         IDE[IDE Plugin]
     end
 
@@ -157,7 +179,7 @@ OTel · Decision Archaeology · Watchdog"]
 
 | Layer | Crate(s) | Responsibility |
 |---|---|---|
-| L10 | `forge-cli`, `forge-serve` | Render state to humans; collect input |
+| L10 | `forge-cli`, `forge-canvas` | Render state to humans; collect input |
 | L9 | `forge-night` | Swap policy bundles (Day / Night / Trust / Strict) |
 | L8 ★ | `forge-stvp` | Refuse tasks without verified source-truth |
 | L7 | `forge-orchestrator` | Schedule a DAG of tasks across agents |
@@ -180,7 +202,7 @@ crates/
 ├── forge-obs/           OpenTelemetry, SQLite trace store, cost gauge, watchdog
 ├── forge-router/        ModelProvider trait + routing policy + prompt translator
 ├── forge-ast/           Tree-sitter wrapper, symbol extraction, DB persistence
-├── forge-crg/      ★   Code-Review Graph: build, query, subgraph extraction
+├── forge-crg/      ★   Code-Review Graph: build, query, subgraph extraction, vis.js export
 ├── forge-lsp/           tower-lsp client, LSP-MCP bridge
 ├── forge-memory/        Working/Recall/Archival/TKG + Truth Vault + Mistake Library
 ├── forge-tools/         All MCP server implementations
@@ -191,7 +213,7 @@ crates/
 ├── forge-night/    ★   Night Mode: Twilight, Night Run, Dawn Digest
 ├── forge-skills/        SKILL.md registry, skill-learning loop
 ├── forge-sidecar/       Always-on background daemon
-├── forge-serve/         Axum HTTP + SSE Live Canvas
+├── forge-canvas/        Axum + WebSocket visual canvas editor + CRG graph viewer
 ├── forge-cli/           clap + ratatui CLI entry point
 ├── forge-eval/          SWE-bench Verified subset runner
 ├── forge-swarm/         (Wave 2) QUIC-based distributed worker protocol
@@ -242,11 +264,11 @@ graph TD
     LSP --> SIDECAR
     MEMORY --> SIDECAR
 
-    NIGHT --> SERVE[forge-serve]
-    ORCH --> SERVE
-    OBS --> SERVE
+    NIGHT --> CANVAS[forge-canvas]
+    ORCH --> CANVAS
+    OBS --> CANVAS
 
-    SERVE --> CLI[forge-cli]
+    CANVAS --> CLI[forge-cli]
     NIGHT --> CLI
     ORCH --> CLI
     OBS --> CLI
@@ -470,7 +492,7 @@ Yantra routes LLM calls across four tiers. The model is never hard-coded — all
 | Embeddings | `fastembed` (local, no API needed) |
 | HTTP client | `reqwest` (async-only) |
 | CLI | `clap` + `ratatui` |
-| HTTP server | Axum + SSE |
+| HTTP server | Axum + WebSocket |
 | Observability | OpenTelemetry (`tracing` + `tracing-subscriber`) |
 | Ed25519 signing | `ring` |
 | Error handling | `thiserror` (libraries) + `anyhow` (binaries) |
@@ -489,15 +511,27 @@ Yantra routes LLM calls across four tiers. The model is never hard-coded — all
 cargo fmt                            # auto-format
 cargo lint                           # clippy, warnings-as-errors
 cargo lint-fix                       # auto-fix machine-applicable lints
-cargo test-all                       # all tests via nextest
+cargo test-all                       # all tests via nextest (541 tests)
 cargo doc-check                      # rustdoc with warnings-as-errors
 cargo build                          # compile everything
+cargo bench                          # Criterion benchmarks, all crates
+cargo sla                            # p99 SLA gate tests (embedded in benches)
 
 # Yantra CLI
-cargo run --bin yantra -- index .          # build CRG for current directory
-cargo run --bin yantra -- ask "..."        # ask the codebase a question
-cargo run --bin yantra -- run "..."        # run a task with full STVP
-cargo run --bin yantra -- night            # start Night Mode
+cargo run --bin yantra -- start                    # interactive shell (recommended)
+cargo run --bin yantra -- start "add JWT rotation" # guided 6-step pipeline
+cargo run --bin yantra -- index .                  # build CRG for current directory
+cargo run --bin yantra -- doctor                   # runtime preflight check
+cargo run --bin yantra -- ask "What does X do?"   # ask the codebase a question
+cargo run --bin yantra -- run "add feature Y"      # full STVP + multi-agent DAG
+cargo run --bin yantra -- night --tasks "fix A,add B"  # Night Mode
+cargo run --bin yantra -- night --dry-run          # smoke test (no LLM)
+cargo run --bin yantra -- status                   # cost gauge + session info
+cargo run --bin yantra -- status --json            # machine-readable
+cargo run --bin yantra -- context "task desc"      # token ledger / CRG compression ratio
+cargo run --bin yantra -- graph --port 8088        # CRG graph viewer in browser
+cargo run --bin yantra -- canvas https://example.com --port 8088   # visual editor
+cargo run --bin yantra -- observe                  # live OTel TUI
 
 # Single-crate
 cargo test -p yantra-crg
@@ -506,73 +540,109 @@ cargo bench -p yantra-crg
 
 ---
 
-## Performance Targets
+## Performance
 
-| Operation | p50 | p99 |
-|---|---|---|
-| CRG subgraph extract | 20ms | 50ms |
-| AST re-parse on file save | 30ms | 150ms |
-| Truth Drift Detector | 30ms | 50ms |
-| Tool call: FS read | 5ms | 20ms |
-| Tool call: LSP get_definition | 80ms | 300ms |
-| Tier-0 model call (Ollama) | 400ms | 1.2s |
-| Tier-1 model call | 1s | 3s |
-| Tier-3 model call (frontier) | 2.5s | 8s |
-| Decision Archaeology write | 2ms | 10ms |
+All numbers are measured on the Yantra codebase itself (**1,786 symbols, ~245 files**).
+Benchmarks live alongside crates: `crates/<name>/benches/<name>_bench.rs`.
+SLA tests (`cargo sla`) are embedded in each bench file as `#[test]` assertions.
 
-**Memory footprint (100K LoC project):**
+### Subsystem latency (p99, debug build)
+
+| Subsystem | What is measured | p99 measured | p99 target | SLA |
+|---|---|---|---|---|
+| AST re-parse | Tree-sitter parse on representative Rust file | **7.2 ms** | < 150 ms | ✅ Pass |
+| STVP token | Ed25519 `issue_token` + `verify_token` round-trip | **< 1 ms** | ≤ 5 ms | ✅ Pass |
+| Gate 1 truth-drift | Scope + constraint check, pure in-memory | **< 1 ms** | ≤ 10 ms | ✅ Pass |
+| Router policy | Tier classification, in-memory decision tree | **< 0.1 ms** | ≤ 1 ms | ✅ Pass |
+| Memory recall | `get_recent_session_ids(3)` on seeded SQLite | **< 5 ms** | ≤ 15 ms | ✅ Pass |
+| LSP framing | Frame + deframe per message (1 000-msg loop) | **< 1 ms** | ≤ 5 ms | ✅ Pass |
+| Night rule engine | Decision rule resolution, 5-rule set, 20 events | **< 1 ms** | ≤ 10 ms | ✅ Pass |
+| DAG schedule | 10-task linear chain add + ready_tasks | **< 200 ms** | ≤ 500 ms | ✅ Pass |
+| CSP planner | 5 tasks, 3 hard constraints, enumerate plans | **< 10 ms** | ≤ 100 ms | ✅ Pass |
+
+> Debug-build timings are ~10× slower than release. All SLA targets are calibrated accordingly.
+
+### CRG compression (on Yantra's own codebase)
+
+| Metric | Value |
+|---|---|
+| Symbols indexed | 1,786 |
+| Files indexed | ~245 |
+| Full-repo token estimate | 71,440 |
+| CRG subgraph (4 096-token budget) | **839 tokens** |
+| Compression ratio | **98.8%** |
+
+### Subsystem accuracy
+
+All accuracy thresholds are enforced by `cargo test-all` — a regression fails the suite.
+
+| Subsystem | Test file | Threshold | Achieved |
+|---|---|---|---|
+| STVP task classifier — easy tier | `stvp_accuracy.rs` | 100% easy / ≥ 75% overall | **80%** (20/20 easy + 4/10 adversarial) |
+| CRG subgraph recall | `crg_tests.rs` | ≥ 95% | ≥ **95%** on fixture |
+| Verifier Gate 1 | `verifier_accuracy.rs` | ≥ 90% | **100%** (10/10) |
+| Hallucination L1 precision | `verifier_accuracy.rs` | ≥ 80% | **100%** (10/10, incl. subtle method calls) |
+| Router tier selection | `router_accuracy.rs` | ≥ 95% | **100%** (10/10) |
+| Memory recall ordering | `memory_accuracy.rs` | 100% | **100%** |
+| Orchestrator DAG ordering | `orchestrator_accuracy.rs` | 100% | **100%** (10/10 chain scenarios) |
+| Night rule engine | `night_accuracy.rs` | 100% | **100%** (15/15 scenarios) |
+| LSP language detection | `lsp_accuracy.rs` | 100% | **100%** (15/15 extensions) |
+| AST symbol extraction (top-level) | `ast_accuracy.rs` | ≥ 90% | **100%** (10/10) |
+| AST impl-method extraction | `ast_accuracy.rs` | documented gap | **0%** — deliberately skipped by extractor |
+| Pipeline verifier end-to-end | `pipeline_dag_accuracy.rs` | 100% | **100%** (8/8 scenarios) |
+| Orchestrator token gate | `pipeline_dag_accuracy.rs` | 100% | **100%** (3/3 — real ed25519) |
+| CSS → Tailwind translation | `css_to_tailwind_accuracy.rs` | ≥ 70% | ≥ **70%** |
+
+### Model call latency targets (Ollama local)
+
+| Tier | Provider | p50 | p99 |
+|---|---|---|---|
+| 0 | Ollama (local, `qwen2.5-coder:7b`) | 400 ms | 1.2 s |
+| 1 | GitHub Models / OpenRouter free | 1 s | 3 s |
+| 2 | Low-cost hosted | 1.5 s | 5 s |
+| 3 | Frontier (Claude, GPT-4o) | 2.5 s | 8 s |
+
+### Memory footprint (100K LoC project)
 
 | Component | Resident |
 |---|---|
 | Yantra runtime (no Ollama) | < 500 MB |
 | Sidecar daemon | < 50 MB |
-| Watchdog process | < 10 MB |
+| Watchdog | < 10 MB |
 
 ---
 
-## Changes Made in This Session
+## Canvas
 
-### Bug Fix — `FOREIGN KEY constraint failed` on `yantra index`
+`yantra canvas [URL]` clones any website and opens a live browser-based editor. The pipeline:
 
-**Root cause:** Files with zero extracted symbols (e.g. files that parse correctly but contain only imports or macro expansions) never got a row in the `files` table. Their imports still referenced `file_id`, violating the SQLite FK constraint and crashing the entire indexer.
+1. `clone_url` fetches the page HTML via `reqwest`.
+2. `DomTree::from_html` parses it with `scraper`, assigning stable `YantraId` attributes to every element.
+3. `css_props_to_tailwind` translates inline CSS into Tailwind utility classes (≥70% accuracy on measured golden table).
+4. `tsx_writer::emit_project` writes a React + Tailwind project under `./yantra-canvas/<slug>/`.
+5. The Axum server serves the project at `/preview/<slug>/` and keeps the browser in sync via **WebSocket hot-reload** — click an element in the inspector, pick a class, and the TSX file on disk updates within one round-trip.
 
-**Fix:** Added `insert_file()` to `forge-ast/src/db.rs`. Both `build_from_repo` and `update_file` in `forge-crg/src/builder.rs` now call `insert_file` *immediately after a successful parse*, before any symbol/import/call-site insertion. The file row is guaranteed to exist before any child record references it.
+---
 
-**Files changed:**
-- [`crates/forge-ast/src/db.rs`](crates/forge-ast/src/db.rs) — new `insert_file()` public function
-- [`crates/forge-ast/src/lib.rs`](crates/forge-ast/src/lib.rs) — re-exported `insert_file`
-- [`crates/forge-crg/src/builder.rs`](crates/forge-crg/src/builder.rs) — `build_from_repo` and `update_file` now call `insert_file` before symbol/import loops
+## Graph viewer
 
-**Verification:**
-```
-cargo run --bin yantra -- index .
-→ Successfully indexed 1153 symbols.
+`yantra graph [--focus <symbol>]` opens an interactive vis.js graph of your CRG in the browser. After `yantra index`, `forge-crg::export` serializes the full graph (or a focused subgraph) to a JSON structure that vis.js renders as a force-directed network. Nodes are symbols; edges are `CALLS`, `IMPORTS`, `IMPLEMENTS`, and `TESTS` relationships. The same JSON endpoint (`/api/graph/json`) is available for programmatic consumption.
 
-cargo test-all
-→ 328 tests run: 328 passed, 0 skipped
+---
 
-cargo lint   → clean (0 warnings)
-cargo doc-check → clean (0 warnings)
-```
+## Observe
 
-### Bug Fix — `yantra ask` Cross-Role Hallucination
+`yantra observe` opens a live ratatui TUI backed by `.yantra/traces.sqlite`. It shows:
 
-When asking about a runtime agent (e.g. `VerifierAgent`), the CRG semantic search pulled in both `forge-agents` (Runtime) and `forge-stvp` (PreFlight) symbols. Without lifecycle boundary context the model conflated the two roles.
+- A scrolling span list (agent, model, duration, cost, outcome) updated in real time.
+- A cost gauge that colors green/yellow/red as the session crosses the soft/hard/kill thresholds defined in `configs/routing.toml`.
+- Anomaly alerts when a span's cost or duration exceeds 3× the rolling session median.
 
-**Fixes:**
-- **Module-Boundary Manifest** appended to CRG subgraph output (`forge-crg/src/subgraph.rs`) — tags each symbol with its crate and lifecycle phase (`PreFlight` / `Runtime` / `Observability` / `Persistence`)
-- **Phase 1.5 Lifecycle Boundary Check** added to `ask.md` prompt — model must explicitly group symbols by phase before answering
-- **Cross-Crate Conflation Detector** added to `ask_verifier.rs` — heuristic check that prints `⚠ Cross-Role Warning` when Runtime and PreFlight keywords are conflated
+---
 
-### Bug Fix — Multi-Agent DAG Greenfield Mode Gap
+## Changelog
 
-In empty workspaces, the multi-agent DAG path never checked `is_greenfield_workspace()` — it always ran the Coder in Incremental Mode. With an empty CRG subgraph, the Coder's safety guardrail fired and the pipeline died.
-
-**Fixes:**
-- `WorkspaceMode` enum (`Greenfield` / `Incremental`) with `detect()` added to `forge-core`
-- `workspace_mode` field added to `AgentContext` and propagated through the scheduler
-- `CoderAgent::run()` branches its prompt on `context.workspace_mode`
-- `coder.md` prompt updated with explicit Greenfield override for the safety guardrail
+See [CHANGELOG.md](./CHANGELOG.md) for the full change history.
 
 ---
 
@@ -587,18 +657,20 @@ yantra/
 ├── clippy.toml
 ├── AGENTS.md               AI assistant protocol (read before writing code)
 ├── ARCHITECTURE.md         full system diagram + spec
+├── CHANGELOG.md            change history (Keep a Changelog format)
 ├── README.md               ← this file
-├── crates/                 all library and binary crates
+├── crates/                 all library and binary crates (benches are per-crate)
 ├── configs/                routing.toml, agents.toml, memory.toml
 ├── skills/                 Git-backed SKILL.md registry
 ├── tests/                  cross-crate integration tests
-├── benches/                criterion benchmarks
-├── docs/                   deep-dive docs + ADRs
+├── docs/                   deep-dive docs + ADRs (decisions/ scaffold present)
 ├── examples/               example invocations
 ├── scripts/                dev tooling
 ├── .github/workflows/      CI/CD (ci.yml, release.yml, nightly.yml)
 └── .yantra/                runtime data (gitignored)
 ```
+
+Criterion benchmarks live alongside the crates they measure: `crates/forge-ast/benches/` and `crates/forge-crg/benches/`.
 
 ---
 

@@ -33,6 +33,19 @@ use crate::tsx_writer::{rewrite_component, ProjectLayout};
 /// Per-project registry held in `AppState`.
 pub type ProjectRegistry = Arc<RwLock<HashMap<String, ProjectHandle>>>;
 
+/// A reversible snapshot of a single DOM node's mutable properties, captured
+/// immediately before an `apply_update` mutates the node. Pushing this onto
+/// `undo_stack` makes the edit undoable.
+#[derive(Debug, Clone)]
+pub struct DomPatch {
+    /// Stable identifier of the DOM element this patch restores.
+    pub yantra_id: String,
+    /// Class list as it was before the edit.
+    pub restore_classes: Vec<String>,
+    /// Inline style map as it was before the edit.
+    pub restore_style: HashMap<String, String>,
+}
+
 /// All state for one loaded project (DOM, TSX layout, root directory).
 #[derive(Debug, Clone)]
 pub struct ProjectHandle {
@@ -44,6 +57,10 @@ pub struct ProjectHandle {
     pub dom: DomTree,
     /// Disk layout from `emit_project`.
     pub layout: ProjectLayout,
+    /// Patches that can be applied to undo recent edits (most-recent last).
+    pub undo_stack: Vec<DomPatch>,
+    /// Patches that can be applied to redo undone edits (most-recent last).
+    pub redo_stack: Vec<DomPatch>,
 }
 
 /// Information returned by `select(yantra_id)` for the inspector panel.
@@ -160,45 +177,59 @@ pub async fn apply_update(
         })?
         .clone();
 
-    let dom_node = handle
-        .dom
-        .find_mut(&yantra_id)
-        .ok_or_else(|| CanvasError::UnknownYantraId {
-            project: project_slug.to_owned(),
+    let (combined_classes, leftover_inline, pre_edit_patch) = {
+        let dom_node =
+            handle
+                .dom
+                .find_mut(&yantra_id)
+                .ok_or_else(|| CanvasError::UnknownYantraId {
+                    project: project_slug.to_owned(),
+                    yantra_id: update.yantra_id.clone(),
+                })?;
+
+        let pre_edit_patch = DomPatch {
             yantra_id: update.yantra_id.clone(),
-        })?;
+            restore_classes: dom_node.classes.clone(),
+            restore_style: dom_node.inline_style.clone(),
+        };
 
-    for class_name in &update.remove_classes {
-        dom_node.classes.retain(|existing| existing != class_name);
-    }
-    for class_name in &update.add_classes {
-        if !dom_node.classes.contains(class_name) {
-            dom_node.classes.push(class_name.clone());
+        for class_name in &update.remove_classes {
+            dom_node.classes.retain(|existing| existing != class_name);
         }
-    }
-    for (property, value) in &update.set_style {
-        dom_node
+        for class_name in &update.add_classes {
+            if !dom_node.classes.contains(class_name) {
+                dom_node.classes.push(class_name.clone());
+            }
+        }
+        for (property, value) in &update.set_style {
+            dom_node
+                .inline_style
+                .insert(property.to_lowercase(), value.clone());
+        }
+
+        let inline_declarations: Vec<CssDeclaration> = dom_node
             .inline_style
-            .insert(property.to_lowercase(), value.clone());
-    }
+            .iter()
+            .map(|(property, value)| CssDeclaration::new(property, value))
+            .collect();
+        let translation = crate::css_to_tailwind::css_props_to_tailwind(&inline_declarations);
 
-    let inline_declarations: Vec<CssDeclaration> = dom_node
-        .inline_style
-        .iter()
-        .map(|(property, value)| CssDeclaration::new(property, value))
-        .collect();
-    let translation = crate::css_to_tailwind::css_props_to_tailwind(&inline_declarations);
+        let mut node_classes = dom_node.classes.clone();
+        node_classes.extend(translation.tailwind_classes);
+        node_classes.sort();
+        node_classes.dedup();
 
-    let mut combined_classes = dom_node.classes.clone();
-    combined_classes.extend(translation.tailwind_classes);
-    combined_classes.sort();
-    combined_classes.dedup();
+        (node_classes, translation.leftover_inline, pre_edit_patch)
+    };
+
+    handle.undo_stack.push(pre_edit_patch);
+    handle.redo_stack.clear();
 
     rewrite_component(
         &component_file_path,
         &yantra_id,
         &combined_classes,
-        &translation.leftover_inline,
+        &leftover_inline,
     )?;
 
     Ok(FileChange {
@@ -206,4 +237,130 @@ pub async fn apply_update(
         project: project_slug.to_owned(),
         yantra_id: update.yantra_id.clone(),
     })
+}
+
+/// Pops the most-recent patch from the undo stack, restores the DOM node to
+/// its previous state, rewrites the TSX file, and pushes an inverse patch
+/// onto the redo stack so the action can be re-applied.
+///
+/// # Errors
+///
+/// - `UnknownProject` if `project_slug` is not registered.
+/// - `EmptyUndoStack` if there are no edits to undo.
+/// - `UnknownYantraId` if the yantra_id from the patch is no longer in the DOM.
+/// - `TsxWriteFailed` on any disk write failure.
+pub async fn undo_update(state: &AppState, project_slug: &str) -> CanvasResult<FileChange> {
+    let mut registry_guard = state.projects.write().await;
+    let handle = registry_guard
+        .get_mut(project_slug)
+        .ok_or_else(|| CanvasError::UnknownProject(project_slug.to_owned()))?;
+
+    let undo_patch = handle
+        .undo_stack
+        .pop()
+        .ok_or_else(|| CanvasError::EmptyUndoStack(project_slug.to_owned()))?;
+
+    let (file_change, inverse_patch) = restore_dom_node(handle, project_slug, &undo_patch)?;
+
+    handle.redo_stack.push(inverse_patch);
+    Ok(file_change)
+}
+
+/// Pops the most-recent entry from the redo stack, re-applies it to the DOM
+/// node, rewrites the TSX file, and pushes an inverse patch back onto the
+/// undo stack.
+///
+/// # Errors
+///
+/// - `UnknownProject` if `project_slug` is not registered.
+/// - `EmptyRedoStack` if there are no undone edits to redo.
+/// - `UnknownYantraId` if the yantra_id from the patch is no longer in the DOM.
+/// - `TsxWriteFailed` on any disk write failure.
+pub async fn redo_update(state: &AppState, project_slug: &str) -> CanvasResult<FileChange> {
+    let mut registry_guard = state.projects.write().await;
+    let handle = registry_guard
+        .get_mut(project_slug)
+        .ok_or_else(|| CanvasError::UnknownProject(project_slug.to_owned()))?;
+
+    let redo_patch = handle
+        .redo_stack
+        .pop()
+        .ok_or_else(|| CanvasError::EmptyRedoStack(project_slug.to_owned()))?;
+
+    let (file_change, inverse_patch) = restore_dom_node(handle, project_slug, &redo_patch)?;
+
+    handle.undo_stack.push(inverse_patch);
+    Ok(file_change)
+}
+
+/// Restores a DOM node to the state described by `patch`, capturing the
+/// pre-restore state as an inverse `DomPatch`. Rewrites the TSX component
+/// file to match the restored state.
+///
+/// Returns `(FileChange, inverse_patch)` on success. The caller decides
+/// which stack receives the inverse patch.
+fn restore_dom_node(
+    handle: &mut ProjectHandle,
+    project_slug: &str,
+    patch: &DomPatch,
+) -> CanvasResult<(FileChange, DomPatch)> {
+    let yantra_id = YantraId::from_string(&patch.yantra_id);
+
+    let component_file_path = handle
+        .layout
+        .component_file_by_yantra_id
+        .get(&yantra_id)
+        .ok_or_else(|| CanvasError::UnknownYantraId {
+            project: project_slug.to_owned(),
+            yantra_id: patch.yantra_id.clone(),
+        })?
+        .clone();
+
+    let (combined_classes, leftover_inline, inverse_patch) = {
+        let dom_node =
+            handle
+                .dom
+                .find_mut(&yantra_id)
+                .ok_or_else(|| CanvasError::UnknownYantraId {
+                    project: project_slug.to_owned(),
+                    yantra_id: patch.yantra_id.clone(),
+                })?;
+
+        let inverse_patch = DomPatch {
+            yantra_id: patch.yantra_id.clone(),
+            restore_classes: dom_node.classes.clone(),
+            restore_style: dom_node.inline_style.clone(),
+        };
+
+        dom_node.classes.clone_from(&patch.restore_classes);
+        dom_node.inline_style.clone_from(&patch.restore_style);
+
+        let inline_declarations: Vec<CssDeclaration> = dom_node
+            .inline_style
+            .iter()
+            .map(|(property, value)| CssDeclaration::new(property, value))
+            .collect();
+        let translation = crate::css_to_tailwind::css_props_to_tailwind(&inline_declarations);
+
+        let mut node_classes = dom_node.classes.clone();
+        node_classes.extend(translation.tailwind_classes);
+        node_classes.sort();
+        node_classes.dedup();
+
+        (node_classes, translation.leftover_inline, inverse_patch)
+    };
+
+    rewrite_component(
+        &component_file_path,
+        &yantra_id,
+        &combined_classes,
+        &leftover_inline,
+    )?;
+
+    let file_change = FileChange {
+        path: component_file_path,
+        project: project_slug.to_owned(),
+        yantra_id: patch.yantra_id.clone(),
+    };
+    Ok((file_change, inverse_patch))
 }
