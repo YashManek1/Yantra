@@ -16,3 +16,11 @@
 //! ## Related
 //! - `forge-orchestrator` — Conductor mode extends the `DAG` scheduler
 //! - `forge-federation` — cross-repo tasks are distributed via Swarm
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_module_compiles() {
+        // Wave 2 placeholder: compile-check only.
+    }
+}

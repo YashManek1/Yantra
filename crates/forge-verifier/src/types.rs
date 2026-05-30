@@ -14,10 +14,13 @@
 //! - `forge-verifier::pipeline` — assembles the final `VerificationResult`
 //! - `forge-verifier::gate1_truth_drift` — returns `ValidationResult`
 //! - `forge-verifier::gate2_static_analysis` — produces `Vec<Violation>`
+//! - `forge-verifier::hallucination` — uses `lsp_bridge` for Layer 2
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use yantra_core::TaskClass;
+use yantra_lsp::LspBridge;
 
 /// A proposed diff produced by a Coder or Refactorer agent.
 #[derive(Debug, Clone)]
@@ -64,7 +67,7 @@ pub enum ValidationResult {
 }
 
 /// Everything a gate needs to locate and run tools against the project.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VerificationContext {
     /// Root of the project being verified.
     pub project_root: PathBuf,
@@ -72,6 +75,25 @@ pub struct VerificationContext {
     pub is_sacred_diff: bool,
     /// Path to the CRG SQLite database, used by the hallucination gate.
     pub crg_db_path: Option<PathBuf>,
+    /// Optional LSP bridge for Layer 2 hallucination verification (go-to-definition
+    /// cross-check). When `None`, the hallucination gate skips L2 and reports only
+    /// the L1 CRG cross-check results.
+    pub lsp_bridge: Option<Arc<LspBridge>>,
+}
+
+impl std::fmt::Debug for VerificationContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VerificationContext")
+            .field("project_root", &self.project_root)
+            .field("is_sacred_diff", &self.is_sacred_diff)
+            .field("crg_db_path", &self.crg_db_path)
+            .field(
+                "lsp_bridge",
+                &self.lsp_bridge.as_ref().map(|_| "<LspBridge>"),
+            )
+            .finish()
+    }
 }
 
 /// Which gate rejected the diff.

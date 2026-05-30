@@ -11,7 +11,11 @@ publish             = false
 name = "yantra-canvas"
 path = "src/main.rs"
 
+[features]
+render-js = ["dep:chromiumoxide"]
+
 [dependencies]
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
 yantra-core.workspace      = true
 yantra-obs.workspace       = true
 yantra-router.workspace    = true
@@ -27,6 +31,7 @@ serde_json.workspace       = true
 clap.workspace             = true
 anyhow.workspace           = true
 axum                       = { version = "0.8", features = ["tokio", "ws"] }
+tower-http                 = { version = "0.6", features = ["fs"] }
 chrono.workspace           = true
 futures-util.workspace     = true
 futures-core.workspace     = true
@@ -39,7 +44,12 @@ ring.workspace             = true
 rusqlite.workspace         = true
 
 [dev-dependencies]
-tower = { version = "0.4", features = ["util"] }
+tower          = { version = "0.4", features = ["util"] }
+tempfile       = "3"
+tokio          = { workspace = true }
+http-body-util = "0.1"
+http           = "1"
+scraper        = { workspace = true }
 
 [lints]
 workspace = true

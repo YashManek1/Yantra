@@ -22,6 +22,10 @@ anyhow.workspace      = true
 fastembed.workspace   = true
 regex.workspace       = true
 
+[dev-dependencies]
+criterion.workspace = true
+uuid.workspace      = true
+
 [lints]
 workspace = true
 

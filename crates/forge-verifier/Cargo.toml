@@ -21,8 +21,14 @@ regex.workspace        = true
 rusqlite.workspace     = true
 
 [dev-dependencies]
-proptest.workspace = true
-chrono.workspace   = true
+proptest.workspace  = true
+chrono.workspace    = true
+criterion.workspace = true
+
+[[bench]]
+name    = "verifier_bench"
+path    = "benches/verifier_bench.rs"
+harness = false
 
 [lints]
 workspace = true

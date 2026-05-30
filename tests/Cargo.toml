@@ -11,8 +11,18 @@ yantra-tools = { path = "../crates/forge-tools" }
 yantra-orchestrator = { path = "../crates/forge-orchestrator" }
 yantra-verifier = { path = "../crates/forge-verifier" }
 yantra-agents = { path = "../crates/forge-agents" }
+yantra-canvas = { path = "../crates/forge-canvas" }
+yantra-crg    = { path = "../crates/forge-crg" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 ring = { workspace = true }
 chrono = { workspace = true }
 tempfile = "3"
+rusqlite = { workspace = true }
+url = { workspace = true }
+scraper = { workspace = true }
+regex = { workspace = true }
+
+[[test]]
+name = "pipeline_dag_accuracy"
+path = "pipeline_dag_accuracy.rs"

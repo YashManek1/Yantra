@@ -32,10 +32,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use futures_util::StreamExt;
-use yantra_agents::{
-    parse_diffs_from_response, Agent, CoderAgent, CommitSigningKey, CommitterAgent, RedTeamAgent,
-    ResearcherAgent, VerifierAgent,
-};
+use yantra_agents::parse_diffs_from_response;
 use yantra_core::{
     AgentKind, ModelTier, ProjectRoot, SessionId, TaskNode, TaskStatus, WorkspaceMode,
 };
@@ -44,7 +41,7 @@ use crate::approval::{ApprovalDecision, ApprovalGate, ApprovalKind, ApprovalMode
 use crate::diff_preview::DiffPreview;
 use crate::tui::RunTui;
 use yantra_crg::{EmbeddingStore, GraphCache};
-use yantra_orchestrator::{CircuitBreaker, EventBus, Orchestrator, Scheduler, TaskDag};
+use yantra_orchestrator::Orchestrator;
 use yantra_router::routing::RoutedCompletionRequest;
 use yantra_router::{CompletionRequest, Message, MessageRole, Router, TaskDescription};
 use yantra_stvp::{
@@ -205,74 +202,13 @@ pub async fn run_command(
         );
         println!("Initializing Multi-Agent DAG scheduler...");
 
-        let dag = Arc::new(TaskDag::open(&yantra_dir)?);
-        dag.clear()?;
-
         let session_id = SessionId::from_uuid(truth.task_id.as_uuid());
-        let event_bus = EventBus::open(&yantra_dir, session_id)?;
-        let circuit_breaker = Arc::new(CircuitBreaker::new(100));
-
-        let mut agents: std::collections::HashMap<AgentKind, Arc<dyn Agent>> =
-            std::collections::HashMap::new();
-        agents.insert(AgentKind::Researcher, Arc::new(ResearcherAgent::new()));
-        agents.insert(AgentKind::Coder, Arc::new(CoderAgent::new()));
-        agents.insert(AgentKind::IntegrityChecker, Arc::new(VerifierAgent::new()));
-        agents.insert(AgentKind::RedTeam, Arc::new(RedTeamAgent::new()));
-
-        let signing_key_commit =
-            CommitSigningKey::generate().context("failed to generate commit key")?;
-        agents.insert(
-            AgentKind::Committer,
-            Arc::new(CommitterAgent::new(signing_key_commit)),
-        );
-
-        let db_path = yantra_dir.join("memory.sqlite");
-        let memory_service = Arc::new(yantra_memory::MemoryService::new(&db_path)?);
-
-        let mut mcp_router = yantra_tools::McpRouter::new([
-            "crg.subgraph".to_owned(),
-            "fs.read_file".to_owned(),
-            "fs.write_file".to_owned(),
-            "fs.apply_diff".to_owned(),
-            "git.commit".to_owned(),
-            "git.log".to_owned(),
-            "git.status".to_owned(),
-        ]);
-
-        let fs_server = Arc::new(yantra_tools::FsMcpServer::new(project_root.clone()));
-        mcp_router.register_server(fs_server);
-
-        let git_server = Arc::new(yantra_tools::GitMcpServer::new(project_root.clone()));
-        mcp_router.register_server(git_server);
-
-        let lsp_bridge = yantra_lsp::LspBridge::new(project_root.as_path());
-        let lsp_server = Arc::new(yantra_tools::LspMcpServer::new(lsp_bridge));
-        mcp_router.register_server(lsp_server);
-
-        if let Ok(connection) = rusqlite::Connection::open(yantra_dir.join("crg.sqlite")) {
-            let embedding_store = yantra_crg::EmbeddingStore::new().ok();
-            let graph_cache = yantra_crg::GraphCache::build(&connection).ok();
-            if let (Some(store), Some(cache)) = (embedding_store, graph_cache) {
-                let _ = store.load_vectors_from_db(&connection);
-                let crg_server =
-                    Arc::new(yantra_tools::CrgMcpServer::new(connection, store, cache));
-                mcp_router.register_server(crg_server);
-            }
-        }
-
-        let workspace_mode = WorkspaceMode::detect(project_root.as_path());
-        let (scheduler, _review_receiver) = Scheduler::new(
-            dag.clone(),
-            agents,
-            event_bus.clone(),
-            circuit_breaker,
-            router.clone(),
-            mcp_router,
+        let scheduler = super::agent_runtime::build_scheduler(
+            &project_root,
+            &yantra_dir,
             session_id,
-            std::time::Duration::from_millis(50),
-            memory_service.clone(),
-            workspace_mode,
-        );
+            router.clone(),
+        )?;
 
         let researcher_task_id = yantra_core::TaskId::new();
         let researcher_node = TaskNode {
@@ -578,6 +514,9 @@ pub async fn run_command(
                 .get("sacred_files")
                 .is_some_and(|list| !list.trim().is_empty()),
             crg_db_path: Some(project_root.as_path().join(".yantra").join("crg.sqlite")),
+            lsp_bridge: Some(std::sync::Arc::new(yantra_lsp::LspBridge::new(
+                project_root.as_path(),
+            ))),
         };
 
         println!("Running verification pipeline...");

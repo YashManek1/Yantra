@@ -13,13 +13,14 @@
 //! ## Related
 //! - `forge-orchestrator::scheduler` — scheduler implementation
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use async_trait::async_trait;
 use yantra_agents::{Agent, AgentContext, AgentError, TaskResult};
 use yantra_core::{
-    AgentCapability, AgentKind, DecisionId, Outcome, SessionId, TaskClass, TaskId, TaskNode, TaskStatus, WorkspaceMode,
+    AgentCapability, AgentKind, DecisionId, Outcome, SessionId, TaskClass, TaskId, TaskNode,
+    TaskStatus, WorkspaceMode,
 };
 use yantra_orchestrator::{CircuitBreaker, EventBus, Scheduler, TaskDag};
 use yantra_router::{Router, RoutingPolicy};
@@ -164,7 +165,8 @@ async fn test_upstream_results_are_isolated_to_dependencies() {
     // Task C depends on Task A, so its upstream_results must contain exactly Task A's result
     let c_upstreams = results.get(&task_id_c).unwrap();
     assert_eq!(
-        c_upstreams.len(), 1,
+        c_upstreams.len(),
+        1,
         "Task C should have exactly one upstream result"
     );
     assert_eq!(c_upstreams[0].task_id, task_id_a);

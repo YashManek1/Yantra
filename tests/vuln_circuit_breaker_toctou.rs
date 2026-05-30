@@ -26,9 +26,7 @@ async fn test_circuit_breaker_concurrency_under_limit() {
 
     for _ in 0..50 {
         let cb_clone = Arc::clone(&circuit_breaker);
-        join_handles.push(tokio::spawn(async move {
-            cb_clone.try_dispatch()
-        }));
+        join_handles.push(tokio::spawn(async move { cb_clone.try_dispatch() }));
     }
 
     let mut successful_dispatches = 0;
@@ -48,7 +46,7 @@ async fn test_circuit_breaker_concurrency_under_limit() {
 #[tokio::test]
 async fn test_circuit_breaker_half_open_single_probe_invariant() {
     let circuit_breaker = Arc::new(CircuitBreaker::new(1));
-    
+
     // First call transitions to Open state
     assert!(circuit_breaker.try_dispatch());
     assert!(!circuit_breaker.try_dispatch());
@@ -61,9 +59,7 @@ async fn test_circuit_breaker_half_open_single_probe_invariant() {
     let mut join_handles = Vec::new();
     for _ in 0..50 {
         let cb_clone = Arc::clone(&circuit_breaker);
-        join_handles.push(tokio::spawn(async move {
-            cb_clone.try_dispatch()
-        }));
+        join_handles.push(tokio::spawn(async move { cb_clone.try_dispatch() }));
     }
 
     let mut successful_dispatches = 0;

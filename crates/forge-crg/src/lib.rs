@@ -23,6 +23,7 @@ pub mod connectivity;
 pub mod embedding;
 pub mod error;
 pub mod export;
+pub mod louvain;
 pub mod render;
 pub mod schema;
 pub mod seed;
@@ -32,7 +33,10 @@ pub use builder::GraphBuilder;
 pub use connectivity::compute_connectivity;
 pub use embedding::EmbeddingStore;
 pub use error::{CrgError, CrgResult};
-pub use export::{export_focused, export_graph, GraphEdgeJson, GraphJson, GraphNodeJson};
+pub use export::{
+    community_label, export_focused, export_graph, GraphEdgeJson, GraphJson, GraphNodeJson,
+};
+pub use louvain::detect_communities;
 pub use render::{NodeProvenance, RenderedSubgraph, SubgraphManifest};
 pub use schema::{create_crg_schema, CRG_SCHEMA_SQL};
 pub use seed::{SeedExtractor, SeedSource};
