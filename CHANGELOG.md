@@ -5,6 +5,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [0.2.0] — 2026-05-31 — Yantra Console + Canvas Fix
+
+### Added
+- **`yantra start` → Yantra Console TUI**: replaced the cosmetic guided pipeline
+  and stub REPL with a unified full-screen ratatui application:
+  conversation pane (streaming `ask` + inline commands), persistent CRG graph
+  side panel (auto-refreshes every 5 s + after `index`/`run`), live telemetry
+  footer (cost gauge + spans/min + error rate from `traces.sqlite`).
+- **Canvas preview fix**: `yantra canvas <url>` now renders the cloned site in
+  the preview iframe. Root cause was a missing `index.html` — `emit_project`
+  wrote only `.tsx` files. New `preview.rs` serializer generates a self-contained
+  HTML document with `data-yantra-id` markers and inlined CSS; `download_assets`
+  is now wired to fetch images/fonts locally. Click-to-inspect works end-to-end.
+- **`forge-cli::commands::ask`**: reusable streaming ask pipeline extracted from
+  the inline `main.rs` code. Both `yantra ask` and the Console share one
+  implementation via an `AskEvent` channel (CLAUDE.md §3.2).
+- **`forge-cli::commands::metrics`**: shared CRG + telemetry compute helpers
+  extracted from `graph.rs` and `observe.rs` to avoid duplication.
+- **`forge-canvas::preview::render_preview_html`**: DOM → self-contained HTML
+  renderer with asset rewriting and `<base href>`.
+- **`forge-canvas::assets::fetch_and_download_assets`**: convenience wrapper
+  for `download_assets` that builds its own `reqwest::Client`.
+- **ADR-005**: documents the suspend/resume pattern for terminal-owning
+  subcommands inside the Yantra Console.
+
+### Changed
+- `yantra start` is now the Yantra Console; old `run_guided_pipeline` and
+  `run_interactive_shell` implementations removed.
+- `yantra version` now reports `0.2.0`.
+- Workspace `Cargo.toml` bumped to `0.2.0`.
+
 ## [Unreleased] — feat/canvas-graph-observe
 
 ### Added (this iteration — benchmarks, accuracy tests, subsystem fixes, unified CLI)

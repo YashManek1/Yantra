@@ -31,8 +31,8 @@ fn test_yantra_version() {
     let stdout_content =
         String::from_utf8(command_output.stdout).expect("Invalid stdout UTF-8 encoding");
     assert!(
-        stdout_content.contains("yantra 0.1.0"),
-        "Expected 'yantra 0.1.0' in output, got: {stdout_content}"
+        stdout_content.contains("yantra 0.2.0"),
+        "Expected 'yantra 0.2.0' in output, got: {stdout_content}"
     );
 }
 

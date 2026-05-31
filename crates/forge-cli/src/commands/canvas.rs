@@ -78,6 +78,30 @@ pub async fn canvas_command(
         let project_root = std::path::PathBuf::from("yantra-canvas").join(&slug);
         let layout = yantra_canvas::emit_project(&dom, &project_root)?;
 
+        let asset_manifest = yantra_canvas::fetch_and_download_assets(
+            &dom,
+            &cloned_site.base_url,
+            &project_root,
+        )
+        .await
+        .unwrap_or_else(|asset_error| {
+            tracing::warn!(
+                error = %asset_error,
+                "asset download partially failed; preview will use origin URLs for missing assets"
+            );
+            yantra_canvas::AssetManifest::new()
+        });
+
+        let preview_html =
+            yantra_canvas::render_preview_html(&dom, &cloned_site, &asset_manifest, &project_root);
+        let preview_index_path = project_root.join("index.html");
+        std::fs::write(&preview_index_path, &preview_html).map_err(|write_error| {
+            anyhow::anyhow!(
+                "failed to write preview index.html to {}: {write_error}",
+                preview_index_path.display()
+            )
+        })?;
+
         {
             let project_handle = yantra_canvas::ProjectHandle {
                 slug: slug.clone(),

@@ -6716,7 +6716,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-agents"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6739,7 +6739,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-ast"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -6759,7 +6759,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-canvas"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -6796,7 +6796,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6840,7 +6840,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "proptest",
@@ -6855,7 +6855,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-crg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6875,7 +6875,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-eval"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -6886,7 +6886,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-federation"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 1.0.69",
  "tracing",
@@ -6918,7 +6918,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -6933,7 +6933,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-memory"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -6952,7 +6952,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-night"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6975,7 +6975,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-obs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "parking_lot",
@@ -6992,7 +6992,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-orchestrator"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7017,7 +7017,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-router"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7035,7 +7035,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-sidecar"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -7050,7 +7050,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-skills"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_yaml",
@@ -7064,7 +7064,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-stvp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -7084,7 +7084,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-swarm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 1.0.69",
  "tracing",
@@ -7093,7 +7093,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-tokenizer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 1.0.69",
  "tracing",
@@ -7102,7 +7102,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-tools"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7123,7 +7123,7 @@ dependencies = [
 
 [[package]]
 name = "yantra-verifier"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "criterion",
