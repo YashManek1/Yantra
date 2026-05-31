@@ -23,10 +23,15 @@ fn test_crlf_line_ending_preservation() {
     let original_content = "pub fn test() -> i32 {\r\n    42\r\n}\r\n";
     std::fs::write(&file_path, original_content).unwrap();
 
-    let diff_text = "@@ -1,3 +1,4 @@\n pub fn test() -> i32 {\n-    42\n+    let result = 42;\n+    result\n }";
+    let diff_text =
+        "@@ -1,3 +1,4 @@\n pub fn test() -> i32 {\n-    42\n+    let result = 42;\n+    result\n }";
 
     let result = apply_diff_to_file(&file_path, diff_text);
-    assert!(result.is_ok(), "Diff application failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Diff application failed: {:?}",
+        result.err()
+    );
 
     let modified_content = std::fs::read_to_string(&file_path).unwrap();
     assert!(

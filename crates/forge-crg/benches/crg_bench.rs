@@ -1,195 +1,202 @@
 //! # Code-Review Graph: Performance Benchmark Suite
 //!
-//! Generates a 100K lines of code Rust repository fixture, runs the
-//! `GraphBuilder::build_from_repo` indexer, builds symbol embeddings using
-//! the `EmbeddingStore`, and benchmarks `extract_subgraph` execution latency.
-//! Asserts the p99 extraction time is under 50 milliseconds, and saves
-//! a markdown report to the workspace target directory.
+//! Generates a large Rust repository fixture (~100K lines of code across
+//! 80 files), runs the `GraphBuilder::build_from_repo` indexer, builds
+//! symbol embeddings via `EmbeddingStore`, and benchmarks the
+//! `extract_subgraph` latency under a fixed natural-language query.
+//!
+//! The p99 SLA target for subgraph extraction is ≤ 50 ms.
 //!
 //! ## Input
-//! - Dynamically generated temporary directory containing Rust files (100K+ `LoC`)
+//! - Dynamically generated temporary directory containing 80 synthetic Rust
+//!   files (each with 75 traits, structs, impls, and free functions)
 //!
 //! ## Output
-//! - A markdown report file saved to `target/crg_bench_report.md`
+//! - Criterion statistical report: mean, standard deviation, and percentile
+//!   estimates for the `extract_subgraph` hot path
 //!
 //! ## Related
-//! - `forge-crg::builder` — the builder being benchmarked
-//! - `forge-crg::subgraph` — the subgraph extractor being benchmarked
+//! - `forge-crg::builder`   — `GraphBuilder` under test
+//! - `forge-crg::subgraph`  — `extract_subgraph` function under test
+//! - `forge-crg::embedding` — `EmbeddingStore` under test
 
 use std::fs;
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::time::Duration;
 
+use criterion::{criterion_group, criterion_main, Criterion};
 use rusqlite::Connection;
 use uuid::Uuid;
 use yantra_crg::{extract_subgraph, EmbeddingStore, GraphBuilder, GraphCache};
 
-fn main() {
-    let temp_directory = std::env::temp_dir().join(format!("yantra-crg-bench-{}", Uuid::new_v4()));
-    fs::create_dir_all(&temp_directory).unwrap();
+struct BenchFixture {
+    _temp_directory: PathBuf,
+    graph_cache: GraphCache,
+    embedding_store: EmbeddingStore,
+}
 
-    let mut lines_of_code = 0;
+impl BenchFixture {
+    fn create() -> Self {
+        let temp_directory =
+            std::env::temp_dir().join(format!("yantra-crg-bench-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_directory)
+            .expect("creating benchmark temp directory must succeed");
 
-    for file_index in 1..=80 {
-        let file_path = temp_directory.join(format!("file_{file_index}.rs"));
-        let mut file_content = String::new();
+        for file_index in 1..=80 {
+            let file_path = temp_directory.join(format!("file_{file_index}.rs"));
+            let mut file_content = String::new();
 
-        for symbol_index in 1..=75 {
-            file_content.push_str(&format!(
-                "pub trait Trait_{file_index}_{symbol_index} {{\n    fn method_{file_index}_{symbol_index}(&self);\n}}\n\n",
-            ));
-            file_content.push_str(&format!(
-                "pub struct Struct_{file_index}_{symbol_index};\n\n",
-            ));
-            file_content.push_str(&format!(
-                "impl Trait_{file_index}_{symbol_index} for Struct_{file_index}_{symbol_index} {{\n    fn method_{file_index}_{symbol_index}(&self) {{\n        function_{file_index}_{symbol_index}();\n    }}\n}}\n\n",
-            ));
-            file_content.push_str(&format!(
-                "pub fn function_{file_index}_{symbol_index}() {{\n",
-            ));
-
-            if symbol_index > 1 {
+            for symbol_index in 1..=75 {
                 file_content.push_str(&format!(
-                    "    function_{file_index}_{}();\n",
-                    symbol_index - 1
+                    "pub trait Trait_{file_index}_{symbol_index} {{\n    fn method_{file_index}_{symbol_index}(&self);\n}}\n\n",
                 ));
-            } else if file_index > 1 {
-                file_content.push_str(&format!("    function_{}_75();\n", file_index - 1));
+                file_content.push_str(&format!(
+                    "pub struct Struct_{file_index}_{symbol_index};\n\n",
+                ));
+                file_content.push_str(&format!(
+                    "impl Trait_{file_index}_{symbol_index} for Struct_{file_index}_{symbol_index} {{\n    fn method_{file_index}_{symbol_index}(&self) {{\n        function_{file_index}_{symbol_index}();\n    }}\n}}\n\n",
+                ));
+                file_content.push_str(&format!(
+                    "pub fn function_{file_index}_{symbol_index}() {{\n",
+                ));
+
+                if symbol_index > 1 {
+                    file_content.push_str(&format!(
+                        "    function_{file_index}_{}();\n",
+                        symbol_index - 1
+                    ));
+                } else if file_index > 1 {
+                    file_content.push_str(&format!("    function_{}_75();\n", file_index - 1));
+                }
+
+                file_content.push_str("}\n\n");
             }
 
-            file_content.push_str("}\n\n");
+            fs::write(&file_path, file_content)
+                .expect("writing synthetic crg bench source file must succeed");
         }
 
-        lines_of_code += file_content.lines().count();
-        fs::write(&file_path, file_content).unwrap();
+        let lib_path = temp_directory.join("lib.rs");
+        let mut lib_content = String::new();
+        for file_index in 1..=80 {
+            lib_content.push_str(&format!("pub mod file_{file_index};\n"));
+        }
+        fs::write(&lib_path, lib_content)
+            .expect("writing lib.rs for crg bench fixture must succeed");
+
+        let sqlite_connection = Connection::open_in_memory()
+            .expect("in-memory SQLite connection must open for crg benchmark");
+        let graph_builder = GraphBuilder::new(sqlite_connection);
+
+        graph_builder
+            .build_from_repo(&temp_directory)
+            .expect("graph indexing must succeed for crg benchmark fixture");
+
+        let embedding_store =
+            EmbeddingStore::new().expect("EmbeddingStore initialisation must succeed");
+        embedding_store
+            .embed_all(graph_builder.connection())
+            .expect("embedding generation must succeed for crg benchmark fixture");
+
+        let graph_cache = GraphCache::build(graph_builder.connection())
+            .expect("GraphCache construction must succeed");
+
+        Self {
+            _temp_directory: temp_directory,
+            graph_cache,
+            embedding_store,
+        }
     }
+}
 
-    let lib_path = temp_directory.join("lib.rs");
-    let mut lib_content = String::new();
-    for file_index in 1..=80 {
-        lib_content.push_str(&format!("pub mod file_{file_index};\n"));
+impl Drop for BenchFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self._temp_directory);
     }
-    lines_of_code += lib_content.lines().count();
-    fs::write(&lib_path, lib_content).unwrap();
+}
 
-    let sqlite_connection = Connection::open_in_memory().unwrap();
-    let graph_builder = GraphBuilder::new(sqlite_connection);
+fn bench_crg_extract_subgraph(benchmark_context: &mut Criterion) {
+    let bench_fixture = BenchFixture::create();
 
-    let indexing_start_time = Instant::now();
-    graph_builder.build_from_repo(&temp_directory).unwrap();
-    let indexing_elapsed_duration = indexing_start_time.elapsed();
-
-    let total_symbols: i64 = graph_builder
-        .connection()
-        .query_row("SELECT COUNT(*) FROM symbols", [], |row| row.get(0))
-        .unwrap();
-
-    let total_edges: i64 = graph_builder
-        .connection()
-        .query_row("SELECT COUNT(*) FROM edges", [], |row| row.get(0))
-        .unwrap();
-
-    let embedding_store = EmbeddingStore::new().unwrap();
-    let embedding_start_time = Instant::now();
-    embedding_store
-        .embed_all(graph_builder.connection())
-        .unwrap();
-    let embedding_elapsed_duration = embedding_start_time.elapsed();
-
-    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+    let benchmark_query = "find greeting function";
 
     for _warmup_index in 0..5 {
         let _subgraph = extract_subgraph(
-            &graph_cache,
-            &embedding_store,
-            "find greeting function",
+            &bench_fixture.graph_cache,
+            &bench_fixture.embedding_store,
+            benchmark_query,
             500,
             &[],
         )
-        .unwrap();
+        .expect("warm-up subgraph extraction must succeed");
     }
 
-    let query_text = "find greeting function";
-    let start_embed = Instant::now();
-    let query_vector = embedding_store.embed_query(query_text).unwrap();
-    let embed_duration = start_embed.elapsed();
+    benchmark_context.bench_function("crg_extract_subgraph_18k_symbols", |bencher| {
+        bencher.iter(|| {
+            extract_subgraph(
+                &bench_fixture.graph_cache,
+                &bench_fixture.embedding_store,
+                benchmark_query,
+                500,
+                &[],
+            )
+            .expect("benchmark subgraph extraction must succeed")
+        });
+    });
+}
 
-    let start_search = Instant::now();
-    let _semantic_matches = embedding_store
-        .search_with_embedding(&query_vector, 10)
-        .unwrap();
-    let search_duration = start_search.elapsed();
+criterion_group! {
+    name    = crg_benches;
+    config  = Criterion::default()
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(100);
+    targets = bench_crg_extract_subgraph
+}
+criterion_main!(crg_benches);
 
-    println!("embed_query (cached): {embed_duration:?}");
-    println!("search_with_embedding (18K symbols): {search_duration:?}");
+#[test]
+fn crg_extract_subgraph_p99_meets_50ms_sla() {
+    use std::time::Instant;
 
-    let start_full_extraction = Instant::now();
-    let _subgraph = extract_subgraph(&graph_cache, &embedding_store, query_text, 500, &[]).unwrap();
-    println!(
-        "full extract_subgraph: {:?}",
-        start_full_extraction.elapsed()
-    );
+    let bench_fixture = BenchFixture::create();
+
+    let benchmark_query = "find greeting function";
+
+    for _warmup_index in 0..5 {
+        let _subgraph = extract_subgraph(
+            &bench_fixture.graph_cache,
+            &bench_fixture.embedding_store,
+            benchmark_query,
+            500,
+            &[],
+        )
+        .expect("warm-up subgraph extraction must succeed");
+    }
 
     let mut extraction_durations: Vec<Duration> = Vec::new();
+
     for _benchmark_index in 0..100 {
         let extraction_start_time = Instant::now();
         let _subgraph = extract_subgraph(
-            &graph_cache,
-            &embedding_store,
-            "find greeting function",
+            &bench_fixture.graph_cache,
+            &bench_fixture.embedding_store,
+            benchmark_query,
             500,
             &[],
         )
-        .unwrap();
+        .expect("sla-test subgraph extraction must succeed");
         extraction_durations.push(extraction_start_time.elapsed());
     }
 
     extraction_durations.sort();
+
     let p99_extraction_duration = extraction_durations
         .get(99)
         .copied()
-        .expect("100 benchmark iterations must produce 100 durations");
+        .expect("100 benchmark iterations must produce 100 duration samples");
 
     assert!(
         p99_extraction_duration.as_secs_f64() < 0.05,
         "Extraction p99 latency exceeded 50ms target: {p99_extraction_duration:?}",
     );
-
-    let manifest_directory_string =
-        std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    let manifest_directory = Path::new(&manifest_directory_string);
-    let workspace_root = if manifest_directory.ends_with("crates/forge-crg")
-        || manifest_directory.ends_with("crates\\forge-crg")
-    {
-        manifest_directory
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf()
-    } else {
-        manifest_directory.to_path_buf()
-    };
-    let target_directory = workspace_root.join("target");
-    fs::create_dir_all(&target_directory).unwrap();
-    let report_path = target_directory.join("crg_bench_report.md");
-
-    let report_content = format!(
-        "# Yantra CRG Performance Benchmark Report\n\n\
-         - **Date/Time**: {}\n\
-         - **Total Lines of Code**: {lines_of_code}\n\
-         - **Total Symbols Indexed**: {total_symbols}\n\
-         - **Total Relational Edges**: {total_edges}\n\
-         - **Indexing Phase Duration**: {:.4} s\n\
-         - **Embedding Generation Phase Duration**: {:.4} s\n\
-         - **Extraction Latency p99 (100 runs)**: {:.4} ms\n\
-         - **Performance Status**: PASS (p99 < 50ms SLA met)\n",
-        chrono::Utc::now().to_rfc3339(),
-        indexing_elapsed_duration.as_secs_f64(),
-        embedding_elapsed_duration.as_secs_f64(),
-        p99_extraction_duration.as_secs_f64() * 1000.0
-    );
-
-    fs::write(&report_path, report_content).unwrap();
-    fs::remove_dir_all(&temp_directory).unwrap();
 }

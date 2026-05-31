@@ -1,0 +1,13 @@
+[profile.default]
+retries          = 0
+fail-fast        = false
+test-threads     = 4
+
+[profile.ci]
+retries          = 0
+fail-fast        = false
+slow-timeout     = { period = "120s", terminate-after = 2 }
+junit            = { path = "target/nextest/ci/junit.xml" }
+
+[profile.default.junit]
+path = "target/nextest/default/junit.xml"

@@ -298,6 +298,33 @@ impl RecallStore {
             },
         ))
     }
+
+    /// Returns the IDs of the `limit` most recently active sessions.
+    ///
+    /// Sessions are ordered by their most recent conversation turn timestamp,
+    /// descending. Used by the heartbeat task 4 KV-cache warm-up.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MemoryError` on database read failure.
+    pub fn get_recent_session_ids(&self, limit: usize) -> MemoryResult<Vec<String>> {
+        let database_guard = self
+            .database_pool
+            .lock()
+            .map_err(|_| MemoryError::LockPoisoned)?;
+        let mut statement = database_guard.prepare(
+            "SELECT DISTINCT session_id
+             FROM conversation_turns
+             GROUP BY session_id
+             ORDER BY MAX(timestamp) DESC
+             LIMIT ?1",
+        )?;
+        let session_ids: Vec<String> = statement
+            .query_map(rusqlite::params![limit as i64], |row| row.get(0))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+        Ok(session_ids)
+    }
 }
 
 fn session_time_bounds(

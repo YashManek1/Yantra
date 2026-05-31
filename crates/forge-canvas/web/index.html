@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yantra Canvas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 font-mono min-h-screen flex flex-col">
+
+  <header class="px-6 py-4 bg-gray-900 border-b border-gray-800">
+    <h1 class="text-amber-400 text-xl font-bold">⚙ Yantra Canvas</h1>
+    <p class="text-sm text-gray-400 mt-1">Visual editor + CRG graph viewer</p>
+  </header>
+
+  <main class="flex-1 px-8 py-8 max-w-3xl mx-auto w-full space-y-6">
+
+    <section class="bg-gray-900 border border-gray-800 rounded-lg p-6">
+      <h2 class="text-lg font-bold text-amber-400 mb-2">Canvas Editor</h2>
+      <p class="text-sm text-gray-300 mb-4">
+        Open a project in the visual editor. Click any DOM element to inspect
+        and edit its Tailwind classes in real time.
+      </p>
+      <code class="block bg-gray-950 text-green-400 px-3 py-2 rounded text-xs">
+        yantra canvas https://example.com
+      </code>
+      <p class="text-xs text-gray-500 mt-3">
+        Then open <a href="/editor/example_com" class="text-amber-400 hover:underline">/editor/&lt;project&gt;</a>
+      </p>
+    </section>
+
+    <section class="bg-gray-900 border border-gray-800 rounded-lg p-6">
+      <h2 class="text-lg font-bold text-amber-400 mb-2">CRG Graph Viewer</h2>
+      <p class="text-sm text-gray-300 mb-4">
+        Explore the Code-Review Graph with an interactive vis.js network.
+        Click any node for an LLM-generated explanation of its role.
+      </p>
+      <a href="/graph" class="inline-block px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded text-white font-bold transition-colors">
+        Open Graph Viewer →
+      </a>
+    </section>
+
+  </main>
+
+  <footer class="px-6 py-3 bg-gray-900 border-t border-gray-800 text-xs text-gray-500 text-center">
+    Yantra — agentic coding runtime · Sankalp Systems
+  </footer>
+
+</body>
+</html>

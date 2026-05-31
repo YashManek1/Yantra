@@ -5,8 +5,14 @@ lint = ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
 # Auto-fix clippy lints where machine-applicable
 lint-fix = ["clippy", "--workspace", "--all-targets", "--fix", "--allow-dirty", "--allow-staged"]
 
-# Run all workspace unit and integration tests using cargo test
-test-all = ["test", "--workspace"]
+# Run all workspace unit and integration tests using nextest
+test-all = ["nextest", "run", "--workspace"]
+
+# Run Criterion benchmarks for the whole workspace
+bench = ["bench", "--workspace"]
+
+# Run all benchmark-embedded p99 SLA #[test]s (enforces latency thresholds in CI)
+sla = ["test", "--workspace", "--benches"]
 
 # Run docs builds with warnings-as-errors (RUSTDOCFLAGS is still required for warnings-as-errors)
 doc-check = ["doc", "--workspace", "--no-deps"]

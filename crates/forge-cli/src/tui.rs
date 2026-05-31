@@ -164,7 +164,8 @@ impl RunTui {
                 .style(Style::default().fg(Color::Cyan));
             frame.render_widget(top_bar_paragraph, vertical_chunks[0]);
 
-            let agent_label = agent_snapshot.map_or_else(|| "—".to_owned(), |agent_kind| format!("{agent_kind:?}"));
+            let agent_label = agent_snapshot
+                .map_or_else(|| "—".to_owned(), |agent_kind| format!("{agent_kind:?}"));
             let task_truncated: String = task_snapshot.chars().take(50).collect();
             let step_truncated: String = step_snapshot.chars().take(60).collect();
 

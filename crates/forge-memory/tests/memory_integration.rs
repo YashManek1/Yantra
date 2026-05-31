@@ -283,8 +283,11 @@ async fn heartbeat_runs_and_stops_cleanly() {
     };
     recall_store.record_turn(&turn).expect("turn recorded");
 
-    let mut handle: HeartbeatHandle =
-        yantra_memory::start_heartbeat(Arc::clone(&recall_store), Duration::from_millis(20));
+    let mut handle: HeartbeatHandle = yantra_memory::start_heartbeat(
+        Arc::clone(&recall_store),
+        std::env::temp_dir(),
+        Duration::from_millis(20),
+    );
 
     tokio::time::sleep(Duration::from_millis(80)).await;
     handle.stop();

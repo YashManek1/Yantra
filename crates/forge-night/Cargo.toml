@@ -25,8 +25,14 @@ gix.workspace                 = true
 reqwest                       = { workspace = true }
 
 [dev-dependencies]
-uuid.workspace          = true
-tokio                   = { workspace = true, features = ["test-util"] }
+uuid.workspace      = true
+tokio               = { workspace = true, features = ["test-util"] }
+criterion.workspace = true
+
+[[bench]]
+name    = "night_bench"
+path    = "benches/night_bench.rs"
+harness = false
 
 [lints]
 workspace = true
