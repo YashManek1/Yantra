@@ -16,7 +16,7 @@ members = [
     "crates/forge-night",
     "crates/forge-skills",
     "crates/forge-sidecar",
-    "crates/forge-serve",
+    "crates/forge-canvas",
     "crates/forge-cli",
     "crates/forge-eval",
     "crates/forge-swarm",
@@ -26,7 +26,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version      = "0.1.0"
+version      = "0.2.0"
 edition      = "2021"
 authors      = ["Sankalp Systems <hello@sankalp.systems>"]
 license      = "Apache-2.0"
@@ -52,7 +52,7 @@ yantra-agents       = { path = "crates/forge-agents" }
 yantra-orchestrator = { path = "crates/forge-orchestrator" }
 yantra-night        = { path = "crates/forge-night" }
 yantra-skills       = { path = "crates/forge-skills" }
-yantra-serve        = { path = "crates/forge-serve" }
+yantra-canvas       = { path = "crates/forge-canvas" }
 yantra-swarm        = { path = "crates/forge-swarm" }
 yantra-federation   = { path = "crates/forge-federation" }
 
@@ -72,6 +72,7 @@ rusqlite           = { version = "0.31", features = ["bundled", "uuid", "chrono"
 reqwest            = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 clap               = { version = "4",    features = ["derive"] }
 proptest           = "1"
+criterion         = { version = "0.5", features = ["html_reports"] }
 ring               = "0.17"
 parking_lot        = "0.12"
 regex              = "1"
@@ -88,6 +89,11 @@ inquire                = "0.7"
 ratatui                = { version = "0.27", features = ["crossterm"] }
 crossterm              = "0.27"
 syntect                = "5"
+scraper                = "0.20"
+lightningcss           = "1.0.0-alpha.59"
+url                    = "2"
+webbrowser             = "1.0"
+ego-tree               = "0.10"
 
 # ---------------------------------------------------------------------------
 # Lint configuration — individual crates inherit with `[lints] workspace = true`

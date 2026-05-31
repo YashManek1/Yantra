@@ -21,5 +21,15 @@ uuid.workspace             = true
 tokio.workspace            = true
 ring.workspace             = true
 
+[dev-dependencies]
+criterion.workspace = true
+uuid.workspace      = true
+yantra-core.workspace = true
+
+[[bench]]
+name    = "memory_bench"
+path    = "benches/memory_bench.rs"
+harness = false
+
 [lints]
 workspace = true

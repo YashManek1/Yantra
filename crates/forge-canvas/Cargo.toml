@@ -1,0 +1,55 @@
+[package]
+name        = "yantra-canvas"
+description = "Browser-based visual editor + CRG graph viewer host (canvas, graph)"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+publish             = false
+
+[[bin]]
+name = "yantra-canvas"
+path = "src/main.rs"
+
+[features]
+render-js = ["dep:chromiumoxide"]
+
+[dependencies]
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
+yantra-core.workspace      = true
+yantra-obs.workspace       = true
+yantra-router.workspace    = true
+yantra-crg.workspace       = true
+yantra-tokenizer.workspace = true
+yantra-tools.workspace     = true
+thiserror.workspace        = true
+tracing.workspace          = true
+tracing-subscriber.workspace = true
+tokio.workspace            = true
+serde.workspace            = true
+serde_json.workspace       = true
+clap.workspace             = true
+anyhow.workspace           = true
+axum                       = { version = "0.8", features = ["tokio", "ws"] }
+tower-http                 = { version = "0.6", features = ["fs"] }
+chrono.workspace           = true
+futures-util.workspace     = true
+futures-core.workspace     = true
+reqwest.workspace          = true
+scraper.workspace          = true
+lightningcss.workspace     = true
+url.workspace              = true
+ego-tree.workspace         = true
+ring.workspace             = true
+rusqlite.workspace         = true
+
+[dev-dependencies]
+tower          = { version = "0.4", features = ["util"] }
+tempfile       = "3"
+tokio          = { workspace = true }
+http-body-util = "0.1"
+http           = "1"
+scraper        = { workspace = true }
+
+[lints]
+workspace = true

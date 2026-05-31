@@ -54,10 +54,16 @@ async fn test_boolean_sacred_bypass_rejected() {
     });
 
     let result_fs = fs_server.write_file(&params_old_bypass);
-    assert!(result_fs.is_err(), "should block simple boolean bypass in fs");
+    assert!(
+        result_fs.is_err(),
+        "should block simple boolean bypass in fs"
+    );
 
     let result_guard = guard_server.check_write(&params_old_bypass);
-    assert!(result_guard.is_err(), "should block simple boolean bypass in sacred guard");
+    assert!(
+        result_guard.is_err(),
+        "should block simple boolean bypass in sacred guard"
+    );
 }
 
 #[tokio::test]

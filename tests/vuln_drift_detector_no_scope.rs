@@ -14,8 +14,8 @@
 //! - `forge-stvp::drift` — drift detector
 //! - `forge-verifier::gate1_truth_drift` — drift gate
 
-use std::collections::BTreeMap;
 use chrono::Utc;
+use std::collections::BTreeMap;
 use yantra_core::{Strictness, TaskClass, TaskId};
 use yantra_stvp::drift::{DriftKind, TruthDriftDetector};
 use yantra_stvp::SourceTruth;
@@ -77,7 +77,10 @@ fn test_positive_allowlist_matches_correctly() {
     let diff = make_diff(&["src/auth/token.rs"]);
 
     let violations = TruthDriftDetector::check(&source_truth, &diff.text);
-    assert!(violations.is_empty(), "Valid allowlisted path must not trigger drift");
+    assert!(
+        violations.is_empty(),
+        "Valid allowlisted path must not trigger drift"
+    );
 }
 
 #[test]
@@ -90,7 +93,9 @@ fn test_positive_allowlist_blocks_non_matching() {
     assert!(!violations.is_empty());
     assert_eq!(violations[0].severity, "error");
     assert_eq!(violations[0].kind, DriftKind::ScopeDrift);
-    assert!(violations[0].message.contains("outside the positive allowlist"));
+    assert!(violations[0]
+        .message
+        .contains("outside the positive allowlist"));
 }
 
 #[tokio::test]
@@ -103,14 +108,21 @@ async fn test_pipeline_warning_does_not_block_verification() {
         project_root: std::env::temp_dir(),
         is_sacred_diff: false,
         crg_db_path: None,
+        lsp_bridge: None,
     };
 
-    let result = VerificationPipeline::verify(&diff, &source_truth, &context, 0).await.unwrap();
-    
+    let result = VerificationPipeline::verify(&diff, &source_truth, &context, 0)
+        .await
+        .unwrap();
+
     // In our simplified test setup, the static analysis/tests may not execute,
     // but the Gate 1 Truth Drift check will NOT block.
     // Let's assert it didn't reject at TruthDrift stage.
     if let VerificationResult::Reject { stage, .. } = result {
-        assert_ne!(stage, yantra_verifier::VerificationStage::TruthDrift, "TruthDrift should not reject on warnings");
+        assert_ne!(
+            stage,
+            yantra_verifier::VerificationStage::TruthDrift,
+            "TruthDrift should not reject on warnings"
+        );
     }
 }

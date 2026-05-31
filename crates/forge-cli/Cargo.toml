@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 yantra-core.workspace         = true
-yantra-serve.workspace        = true
+yantra-canvas.workspace       = true
 yantra-night.workspace        = true
 yantra-orchestrator.workspace = true
 yantra-stvp.workspace         = true
@@ -47,6 +47,9 @@ yantra-skills.workspace       = true
 ratatui.workspace             = true
 crossterm.workspace           = true
 syntect.workspace             = true
+webbrowser.workspace          = true
+url.workspace                 = true
+scraper.workspace             = true
 
 [lints]
 workspace = true

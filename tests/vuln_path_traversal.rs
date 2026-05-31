@@ -83,6 +83,8 @@ async fn test_git_mcp_branch_name_traversal_blocked() {
     let params_traversal = serde_json::json!({
         "name": "../../outside/ref"
     });
-    let result_traversal = git_server.handle("git.branch_create", params_traversal).await;
+    let result_traversal = git_server
+        .handle("git.branch_create", params_traversal)
+        .await;
     assert!(result_traversal.is_err());
 }

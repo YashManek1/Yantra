@@ -21,7 +21,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use uuid::Uuid;
 use yantra_core::SymbolId;
-use yantra_crg::{extract_subgraph, EmbeddingStore, GraphBuilder, GraphCache};
+use yantra_crg::{
+    export_focused, export_graph, extract_subgraph, EmbeddingStore, GraphBuilder, GraphCache,
+};
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Ord, PartialOrd)]
 struct SymbolRecord {
@@ -447,8 +449,8 @@ fn test_subgraph_golden_corpus_recall() {
     }
 
     assert!(
-        total_matched_symbols * 10 >= total_expected_symbols * 9,
-        "Golden corpus recall target (>90%) not met: {total_matched_symbols}/{total_expected_symbols} symbols matched",
+        total_matched_symbols * 20 >= total_expected_symbols * 19,
+        "Golden corpus recall target (≥95%) not met: {total_matched_symbols}/{total_expected_symbols} symbols matched",
     );
 
     fs::remove_dir_all(&temp_directory).unwrap();
@@ -542,6 +544,238 @@ fn test_proximity_aware_pruning_correctness() {
             "Expected hop-1 Greeter to be retained if hop-2 format_message is retained"
         );
     }
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_export_graph_node_count_matches_symbol_count() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory =
+        std::env::temp_dir().join(format!("yantra-crg-export-count-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+    let graph_json = export_graph(&graph_cache);
+
+    assert!(
+        !graph_json.nodes.is_empty(),
+        "Expected at least one node in the exported graph"
+    );
+
+    for graph_node in &graph_json.nodes {
+        assert!(
+            !graph_node.id.is_empty(),
+            "Each exported node must have a non-empty id"
+        );
+        assert!(
+            !graph_node.label.is_empty(),
+            "Each exported node must have a non-empty label"
+        );
+        assert!(
+            !graph_node.kind.is_empty(),
+            "Each exported node must have a non-empty kind"
+        );
+    }
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_export_graph_is_deterministic() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory =
+        std::env::temp_dir().join(format!("yantra-crg-export-det-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+
+    let result_a = export_graph(&graph_cache);
+    let result_b = export_graph(&graph_cache);
+
+    assert_eq!(
+        result_a.nodes.len(),
+        result_b.nodes.len(),
+        "Two consecutive export_graph calls must return the same number of nodes"
+    );
+    assert_eq!(
+        result_a.edges.len(),
+        result_b.edges.len(),
+        "Two consecutive export_graph calls must return the same number of edges"
+    );
+
+    if !result_a.nodes.is_empty() {
+        assert_eq!(
+            result_a.nodes[0].id, result_b.nodes[0].id,
+            "First node id must be identical across two export_graph calls"
+        );
+    }
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_export_graph_node_colors_are_valid_hex() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory =
+        std::env::temp_dir().join(format!("yantra-crg-export-colors-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+    let graph_json = export_graph(&graph_cache);
+
+    for graph_node in &graph_json.nodes {
+        assert!(
+            graph_node.color.starts_with('#'),
+            "Node color must start with '#', got: {}",
+            graph_node.color
+        );
+        assert_eq!(
+            graph_node.color.len(),
+            7,
+            "Node color must be 7 characters (#rrggbb), got: {}",
+            graph_node.color
+        );
+        assert!(
+            graph_node.color[1..]
+                .chars()
+                .all(|character| character.is_ascii_hexdigit()),
+            "Node color hex digits must be valid ASCII hex, got: {}",
+            graph_node.color
+        );
+    }
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_export_focused_nonexistent_id_returns_error() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory =
+        std::env::temp_dir().join(format!("yantra-crg-export-noexist-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+
+    let focused_result = export_focused(&graph_cache, "nonexistent-id-00000000", 2);
+    assert!(
+        focused_result.is_err(),
+        "Expected Err for a nonexistent focus symbol id, but got Ok"
+    );
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_export_focused_zero_hops_returns_at_most_one_node() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory =
+        std::env::temp_dir().join(format!("yantra-crg-export-zerohop-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let first_symbol_id: String = graph_builder
+        .connection()
+        .query_row("SELECT id FROM symbols LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+
+    let focused_result = export_focused(&graph_cache, &first_symbol_id, 0).unwrap();
+    assert!(
+        focused_result.nodes.len() <= 1,
+        "Zero hops must return at most one node, got: {}",
+        focused_result.nodes.len()
+    );
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_export_focused_hops_monotonically_increases_nodes() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory =
+        std::env::temp_dir().join(format!("yantra-crg-export-mono-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let first_symbol_id: String = graph_builder
+        .connection()
+        .query_row("SELECT id FROM symbols LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+
+    let result_one_hop = export_focused(&graph_cache, &first_symbol_id, 1).unwrap();
+    let result_three_hops = export_focused(&graph_cache, &first_symbol_id, 3).unwrap();
+
+    assert!(
+        result_three_hops.nodes.len() >= result_one_hop.nodes.len(),
+        "More hops must produce at least as many nodes as fewer hops: 1-hop={}, 3-hop={}",
+        result_one_hop.nodes.len(),
+        result_three_hops.nodes.len()
+    );
+
+    fs::remove_dir_all(&temp_directory).unwrap();
+}
+
+#[test]
+fn test_community_quality_after_louvain() {
+    let source_fixture_directory = resolve_source_fixture_directory();
+    let temp_directory =
+        std::env::temp_dir().join(format!("yantra-crg-community-{}", Uuid::new_v4()));
+    copy_directory_recursively(&source_fixture_directory, &temp_directory).unwrap();
+
+    let sqlite_connection = Connection::open_in_memory().unwrap();
+    let graph_builder = GraphBuilder::new(sqlite_connection);
+    graph_builder.build_from_repo(&temp_directory).unwrap();
+
+    let graph_cache = GraphCache::build(graph_builder.connection()).unwrap();
+
+    let node_count = graph_cache.symbol_details.len();
+
+    let graph_json = export_graph(&graph_cache);
+
+    let distinct_community_labels: std::collections::HashSet<String> = graph_json
+        .nodes
+        .iter()
+        .map(|graph_node| graph_node.community.clone())
+        .collect();
+
+    let distinct_community_count = distinct_community_labels.len();
+
+    assert!(
+        node_count > 0,
+        "Expected at least one symbol node in the small-repo fixture"
+    );
+
+    assert!(
+        distinct_community_count <= node_count / 2 + 1,
+        "Louvain must group nodes: expected \u{2264}{} distinct communities for {node_count} nodes, got {distinct_community_count}",
+        node_count / 2 + 1,
+    );
 
     fs::remove_dir_all(&temp_directory).unwrap();
 }

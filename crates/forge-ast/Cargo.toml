@@ -25,6 +25,7 @@ proptest.workspace    = true
 serde_json.workspace  = true
 uuid.workspace        = true
 chrono.workspace      = true
+criterion.workspace   = true
 
 [[bench]]
 name    = "ast_bench"
