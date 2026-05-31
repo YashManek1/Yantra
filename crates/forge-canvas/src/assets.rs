@@ -26,8 +26,40 @@ use url::Url;
 use crate::dom::DomTree;
 use crate::error::{CanvasError, CanvasResult};
 
+const ASSET_DOWNLOADER_USER_AGENT: &str = "Mozilla/5.0 (Yantra-Canvas) yantra/0.1";
+const ASSET_DOWNLOADER_TIMEOUT_SECS: u64 = 10;
+
 /// Maps an original asset URL to its local path under `public/`.
 pub type AssetManifest = HashMap<String, PathBuf>;
+
+/// Convenience wrapper: builds a fresh `reqwest::Client` and downloads all
+/// image and font assets referenced in `dom_tree` into
+/// `<project_root>/public/`. Returns a manifest mapping original URLs to local
+/// file paths.
+///
+/// Callers that already have a `reqwest::Client` should call
+/// [`download_assets`] directly to share the connection pool.
+///
+/// # Errors
+///
+/// Returns `CanvasError::AssetDownloadFailed` when the HTTP client cannot be
+/// built or when the `public/` directory cannot be created.
+pub async fn fetch_and_download_assets(
+    dom_tree: &DomTree,
+    base_url: &Url,
+    project_root: &Path,
+) -> CanvasResult<AssetManifest> {
+    let http_client = reqwest::Client::builder()
+        .user_agent(ASSET_DOWNLOADER_USER_AGENT)
+        .timeout(std::time::Duration::from_secs(
+            ASSET_DOWNLOADER_TIMEOUT_SECS,
+        ))
+        .build()
+        .map_err(|build_error| {
+            CanvasError::AssetDownloadFailed(format!("client build failed: {build_error}"))
+        })?;
+    download_assets(dom_tree, base_url, project_root, &http_client).await
+}
 
 /// Downloads all image and font assets referenced in `dom_tree` and writes
 /// them into `<project_root>/public/`. Returns a manifest mapping original

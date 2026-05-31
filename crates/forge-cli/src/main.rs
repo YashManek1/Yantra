@@ -4,9 +4,10 @@
 //! ratatui for the interactive terminal UI. Delegates all runtime logic to
 //! `forge-orchestrator`, `forge-night`, and `forge-canvas`.
 //!
-//! **Recommended entry point:** `yantra start` — boots all services and provides
-//! an interactive shell (no args) or a guided 6-step pipeline (with a task arg).
-//! All other subcommands remain available for power-user direct invocation.
+//! **Recommended entry point:** `yantra start` — launches the Yantra Console, a
+//! unified TUI with a streaming conversation pane, a live CRG graph side panel,
+//! and a real-time telemetry footer. All other subcommands remain available for
+//! direct power-user invocation.
 //!
 //! ## Input
 //! - CLI arguments: subcommand + flags
@@ -37,17 +38,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
-use futures_util::StreamExt;
 use serde::Deserialize;
-use yantra_core::{
-    AgentKind, ModelCapability, ModelTier, Outcome, ProjectRoot, SessionId, Span, SpanId, TaskId,
-};
-use yantra_obs::{init_tracing, record_span, CostThresholds, TracingConfig};
-use yantra_router::routing::RoutedCompletionRequest;
+use yantra_core::{ModelCapability, ModelTier, ProjectRoot, SessionId};
+use yantra_obs::{init_tracing, CostThresholds, TracingConfig};
 use yantra_router::{
-    CompletionRequest, CompletionResponse, GitHubModelsProvider, Message, MessageRole,
-    ModelProvider, OllamaProvider, OpenRouterProvider, ProviderError, ProviderStatus, Router,
-    RoutingPolicy,
+    CompletionRequest, CompletionResponse, GitHubModelsProvider, ModelProvider, OllamaProvider,
+    OpenRouterProvider, ProviderError, ProviderStatus, Router, RoutingPolicy,
 };
 
 #[derive(Debug, Deserialize)]
@@ -214,9 +210,9 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
     },
-    /// Unified entry point: interactive shell (no task) or guided pipeline (with task)
+    /// Unified entry point: launches the Yantra Console (conversation + live graph + telemetry)
     Start {
-        /// Optional task description — triggers the 6-step guided pipeline when provided
+        /// Optional task description — auto-submitted as `run <task>` when provided
         task: Option<String>,
     },
     /// Prints the current version
@@ -391,6 +387,12 @@ async fn main() -> anyhow::Result<()> {
     let routing_policy = RoutingPolicy::from_file(config_file_path).unwrap_or_default();
     let router = Arc::new(Router::new(routing_policy, model_providers));
 
+    let cost_thresholds = CostThresholds {
+        soft: routing_config.budget.soft_usd,
+        hard: routing_config.budget.hard_usd,
+        kill: routing_config.budget.kill_usd,
+    };
+
     match cli_arguments.command {
         Commands::Run { description } => {
             commands::run::run_command(description, project_root, router.clone()).await?;
@@ -431,189 +433,42 @@ async fn main() -> anyhow::Result<()> {
             println!("All embeddings and cache built successfully.");
         }
         Commands::Ask { question } => {
-            let crg_database_path = project_root.as_path().join(".yantra").join("crg.sqlite");
-            let crg_cache_path = project_root
-                .as_path()
-                .join(".yantra")
-                .join("crg_cache.json");
-            let mut subgraph_text = String::new();
-            let mut rendered_subgraph_option = None;
-            let mut graph_cache_option = None;
-
-            if crg_database_path.exists() {
-                if let Ok(database_connection) = rusqlite::Connection::open(&crg_database_path) {
-                    let _ = yantra_crg::schema::create_crg_schema(&database_connection);
-
-                    let mut graph_cache_option_local = None;
-                    if crg_cache_path.exists() {
-                        if let Ok(cache_text) = fs::read_to_string(&crg_cache_path) {
-                            if let Ok(deserialized_graph_cache) =
-                                serde_json::from_str::<yantra_crg::GraphCache>(&cache_text)
-                            {
-                                graph_cache_option_local = Some(deserialized_graph_cache);
-                            }
+            let (ask_event_sender, mut ask_event_receiver) =
+                tokio::sync::mpsc::unbounded_channel::<commands::ask::AskEvent>();
+            let router_clone = router.clone();
+            let project_root_clone = project_root.clone();
+            let ask_join_handle = tokio::spawn(async move {
+                commands::ask::run_ask(
+                    &question,
+                    router_clone,
+                    &project_root_clone,
+                    session_id,
+                    ask_event_sender,
+                )
+                .await
+            });
+            while let Some(ask_event) = ask_event_receiver.recv().await {
+                match ask_event {
+                    commands::ask::AskEvent::Subgraph(subgraph_text) => {
+                        if subgraph_text.starts_with("(No CRG") {
+                            println!("{subgraph_text}\n");
+                        } else {
+                            println!("## Extracted CRG Subgraph:\n{subgraph_text}\n");
                         }
                     }
-
-                    let graph_cache = if let Some(cached_graph) = graph_cache_option_local {
-                        cached_graph
-                    } else {
-                        let newly_built_graph =
-                            yantra_crg::GraphCache::build(&database_connection)?;
-                        if let Ok(serialized_graph) = serde_json::to_string(&newly_built_graph) {
-                            let _ = fs::write(&crg_cache_path, serialized_graph);
-                        }
-                        newly_built_graph
-                    };
-
-                    let embedding_store = yantra_crg::EmbeddingStore::new()?;
-                    embedding_store.load_vectors_from_db(&database_connection)?;
-                    let rendered_subgraph = yantra_crg::extract_subgraph(
-                        &graph_cache,
-                        &embedding_store,
-                        &question,
-                        8192,
-                        &[],
-                    )?;
-                    subgraph_text.clone_from(&rendered_subgraph.text);
-                    rendered_subgraph_option = Some(rendered_subgraph);
-                    graph_cache_option = Some(graph_cache);
-                }
-            }
-
-            if subgraph_text.is_empty() {
-                println!("(No CRG Subgraph found or extracted. Proceeding with question context only.)\n");
-            } else {
-                println!("## Extracted CRG Subgraph:\n{subgraph_text}\n");
-            }
-
-            let system_prompt = fs::read_to_string("crates/forge-agents/prompts/ask.md")
-                .unwrap_or_else(|_| "You are the Ask agent inside Yantra, an honest and precise architectural navigator.".to_string());
-
-            let code_context_section = if subgraph_text.is_empty() {
-                "No CRG index available for this repository.".to_string()
-            } else {
-                subgraph_text.clone()
-            };
-
-            let user_content = format!(
-                "## Code Context (CRG Subgraph)\n{code_context_section}\n\n\
-                 ## Question\n{question}"
-            );
-
-            let messages = vec![
-                Message {
-                    role: MessageRole::System,
-                    content: system_prompt,
-                    tool_calls: Vec::new(),
-                },
-                Message {
-                    role: MessageRole::User,
-                    content: user_content,
-                    tool_calls: Vec::new(),
-                },
-            ];
-
-            let completion_request = CompletionRequest {
-                messages,
-                max_tokens: Some(1024),
-                temperature: 0.2,
-                tools: None,
-                stop_sequences: Vec::new(),
-            };
-            let routed_request = RoutedCompletionRequest {
-                required_tier: ModelTier::Tier0,
-                completion_request,
-            };
-
-            let provider = router.route(&routed_request).await?;
-
-            let start_instant = std::time::Instant::now();
-            let mut stream = provider
-                .complete_stream(routed_request.completion_request.clone())
-                .await?;
-            let mut accumulated_content = String::new();
-            while let Some(token_result) = stream.next().await {
-                let token = token_result?;
-                print!("{token}");
-                let _ = std::io::stdout().flush();
-                accumulated_content.push_str(&token);
-            }
-            println!();
-
-            let duration_milliseconds =
-                u64::try_from(start_instant.elapsed().as_millis()).unwrap_or(u64::MAX);
-
-            if let (Some(subgraph_payload), Some(global_graph_cache)) =
-                (&rendered_subgraph_option, &graph_cache_option)
-            {
-                let unverified_symbols = ask_verifier::SymbolAllowlistVerifier::verify(
-                    subgraph_payload,
-                    global_graph_cache,
-                    &accumulated_content,
-                );
-                if !unverified_symbols.is_empty() {
-                    println!("\n\x1b[33m⚠ Grounding Warning — the following symbols/paths could not be verified\x1b[0m");
-                    println!("\x1b[33m  against the CRG index and may be hallucinated:\x1b[0m");
-                    for unverified_symbol in unverified_symbols {
-                        println!("\x1b[33m    • `{unverified_symbol}`\x1b[0m");
+                    commands::ask::AskEvent::Token(token) => {
+                        print!("{token}");
+                        let _ = std::io::stdout().flush();
                     }
-                }
-
-                let cross_role_warnings =
-                    ask_verifier::SymbolAllowlistVerifier::check_cross_crate_conflations(
-                        subgraph_payload,
-                        global_graph_cache,
-                        &accumulated_content,
-                    );
-                if !cross_role_warnings.is_empty() {
-                    println!("\n\x1b[33m⚠ Cross-Role Warning — potential lifecycle boundary/role conflations detected:\x1b[0m");
-                    for warning in cross_role_warnings {
-                        println!("\x1b[33m    • {warning}\x1b[0m");
+                    commands::ask::AskEvent::GroundingWarning(warning_text) => {
+                        println!("\n\x1b[33m⚠ {warning_text}\x1b[0m");
+                    }
+                    commands::ask::AskEvent::Cost(cost_usd) => {
+                        println!("\nCost: ${cost_usd:.6}");
                     }
                 }
             }
-
-            let cost_per_thousand_input = provider.capability().cost_per_1k_in;
-            let cost_per_thousand_output = provider.capability().cost_per_1k_out;
-            let tokens_in = (routed_request
-                .completion_request
-                .messages
-                .iter()
-                .map(|msg| msg.content.len())
-                .sum::<usize>()
-                / 4) as u64;
-            let tokens_out = (accumulated_content.len() / 4) as u64;
-            let input_cost = (tokens_in as f64 / 1000.0) * f64::from(cost_per_thousand_input);
-            let output_cost = (tokens_out as f64 / 1000.0) * f64::from(cost_per_thousand_output);
-            let total_call_cost = input_cost + output_cost;
-
-            println!("Cost: ${total_call_cost:.6}");
-
-            // Record this model execution span in the trace database
-            let trace_database_path = project_root.as_path().join(".yantra").join("traces.sqlite");
-            if let Some(parent_directory) = trace_database_path.parent() {
-                fs::create_dir_all(parent_directory)?;
-            }
-            let trace_connection = rusqlite::Connection::open(&trace_database_path)?;
-
-            let span_record = Span {
-                span_id: SpanId::new(),
-                parent_id: None,
-                session_id,
-                task_id: Some(TaskId::new()),
-                truth_token: None,
-                agent: Some(AgentKind::Coder),
-                model: yantra_core::ModelId::new(provider.id()).ok(),
-                tokens_in,
-                tokens_out,
-                cost_usd: total_call_cost,
-                duration_ms: duration_milliseconds,
-                started_at: chrono::Utc::now(),
-                outcome: Outcome::Success,
-                error: None,
-            };
-            record_span(&trace_connection, &span_record)?;
+            ask_join_handle.await??;
         }
         Commands::Canvas {
             url,
@@ -628,20 +483,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Observe => {
             let trace_database_path = project_root.as_path().join(".yantra").join("traces.sqlite");
-            let cost_thresholds = CostThresholds {
-                soft: routing_config.budget.soft_usd,
-                hard: routing_config.budget.hard_usd,
-                kill: routing_config.budget.kill_usd,
-            };
             commands::observe::observe_command(trace_database_path, cost_thresholds).await?;
         }
         Commands::Status { json } => {
             let trace_database_path = project_root.as_path().join(".yantra").join("traces.sqlite");
-            let cost_thresholds = CostThresholds {
-                soft: routing_config.budget.soft_usd,
-                hard: routing_config.budget.hard_usd,
-                kill: routing_config.budget.kill_usd,
-            };
 
             if !trace_database_path.exists() {
                 let empty_status = StatusSnapshot::empty(&cost_thresholds);
@@ -698,10 +543,17 @@ async fn main() -> anyhow::Result<()> {
             commands::night::night_command(tasks, dry_run, router.clone(), project_root).await?;
         }
         Commands::Start { task } => {
-            commands::start::start_command(task, router.clone(), project_root).await?;
+            commands::start::start_command(
+                task,
+                router.clone(),
+                project_root,
+                cost_thresholds,
+                session_id,
+            )
+            .await?;
         }
         Commands::Version => {
-            println!("yantra 0.1.0");
+            println!("yantra 0.2.0");
         }
     }
 
