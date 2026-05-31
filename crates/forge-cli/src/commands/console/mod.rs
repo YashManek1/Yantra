@@ -175,9 +175,7 @@ pub(crate) async fn console_command(
     let mut terminal_guard = TerminalGuard::enter()?;
 
     let mut ask_event_receiver_opt: Option<mpsc::UnboundedReceiver<AskEvent>> = None;
-    let mut ask_join_handle_opt: Option<
-        tokio::task::JoinHandle<anyhow::Result<()>>,
-    > = None;
+    let mut ask_join_handle_opt: Option<tokio::task::JoinHandle<anyhow::Result<()>>> = None;
 
     if let Some(task_text) = initial_task {
         let auto_submit = format!("run {task_text}");
@@ -287,9 +285,7 @@ async fn handle_key_event(
     session_id: SessionId,
     graph_refresh_sender: &mpsc::UnboundedSender<()>,
     ask_event_receiver_opt: &mut Option<mpsc::UnboundedReceiver<AskEvent>>,
-    ask_join_handle_opt: &mut Option<
-        tokio::task::JoinHandle<anyhow::Result<()>>,
-    >,
+    ask_join_handle_opt: &mut Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
     terminal_guard: &mut TerminalGuard,
     thresholds: &CostThresholds,
     trace_database_path: PathBuf,
@@ -365,9 +361,7 @@ async fn handle_command(
     session_id: SessionId,
     graph_refresh_sender: &mpsc::UnboundedSender<()>,
     ask_event_receiver_opt: &mut Option<mpsc::UnboundedReceiver<AskEvent>>,
-    ask_join_handle_opt: &mut Option<
-        tokio::task::JoinHandle<anyhow::Result<()>>,
-    >,
+    ask_join_handle_opt: &mut Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
     terminal_guard: &mut TerminalGuard,
     thresholds: &CostThresholds,
     trace_database_path: PathBuf,
@@ -499,11 +493,8 @@ async fn handle_command(
                 graph_refresh_sender,
                 "observe",
                 || async move {
-                    crate::commands::observe::observe_command(
-                        trace_database_path,
-                        *thresholds,
-                    )
-                    .await
+                    crate::commands::observe::observe_command(trace_database_path, *thresholds)
+                        .await
                 },
             )
             .await;

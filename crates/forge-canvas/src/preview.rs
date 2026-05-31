@@ -246,7 +246,7 @@ pub fn render_preview_html(
 
 #[cfg(test)]
 mod tests {
-    
+
     use std::path::PathBuf;
 
     use scraper::Html;

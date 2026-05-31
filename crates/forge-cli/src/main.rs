@@ -553,7 +553,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
         }
         Commands::Version => {
-            println!("yantra 0.2.0");
+            println!("yantra 0.3.0");
         }
     }
 

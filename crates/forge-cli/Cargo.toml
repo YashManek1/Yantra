@@ -51,5 +51,8 @@ webbrowser.workspace          = true
 url.workspace                 = true
 scraper.workspace             = true
 
+[build-dependencies]
+winresource = { version = "0.1", optional = false }
+
 [lints]
 workspace = true
