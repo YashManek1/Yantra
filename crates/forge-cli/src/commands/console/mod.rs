@@ -249,6 +249,9 @@ pub(crate) async fn console_command(
 
         if crossterm::event::poll(std::time::Duration::from_millis(100))? {
             if let crossterm::event::Event::Key(key_event) = crossterm::event::read()? {
+                if key_event.kind != crossterm::event::KeyEventKind::Press {
+                    continue;
+                }
                 handle_key_event(
                     key_event,
                     &mut app,

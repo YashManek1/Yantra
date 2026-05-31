@@ -20,7 +20,7 @@ members = [
     "crates/forge-cli",
     "crates/forge-eval",
     "crates/forge-swarm",
-    "crates/forge-federation", "try-yantra",
+    "crates/forge-federation",
     "tests",
 ]
 resolver = "2"
