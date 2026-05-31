@@ -32,6 +32,9 @@ jobs:
           - name: macos-aarch64
             os: macos-latest
             target: aarch64-apple-darwin
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,7 +68,7 @@ jobs:
         shell: bash
 
       - name: Package archive (Unix)
-        if: ${{ !env.ACT }}
+        if: ${{ !env.ACT && matrix.name != 'windows-x86_64' }}
         run: |
           STAGING="yantra-${{ matrix.name }}"
           mkdir "$STAGING"
@@ -76,6 +79,14 @@ jobs:
           tar czf "${STAGING}.tar.gz" "$STAGING"
           echo "ARCHIVE=${STAGING}.tar.gz" >> "$GITHUB_ENV"
         shell: bash
+
+      - name: Package archive (Windows)
+        if: ${{ !env.ACT && matrix.name == 'windows-x86_64' }}
+        shell: pwsh
+        run: |
+          $src = "target/${{ matrix.target }}/release/yantra.exe"
+          Copy-Item $src "yantra.exe"
+          echo "ARCHIVE=yantra.exe" >> $env:GITHUB_ENV
 
       - name: Upload archive to release
         if: ${{ !env.ACT && startsWith(github.ref, 'refs/tags/v') }}
