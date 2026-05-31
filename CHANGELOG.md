@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [0.3.0] — 2026-05-31 — Windows manifest, comprehensive docs, SmartScreen guidance
+
+### Added
+- **Windows application manifest** embedded in `yantra.exe`: declares the binary
+  as `SankalpSystems.Yantra`, marks it as standard-user (no elevation), enables
+  long-path awareness and Windows 10/11 compatibility mode. Explorer → Properties
+  → Details now shows the product name, description, and copyright. Helps build
+  Windows Defender reputation over time.
+- **`crates/forge-cli/build.rs`**: cross-platform build script that embeds the
+  manifest and version-info resources on Windows via `winresource`.
+- **Complete README rewrite**: every command documented with examples, SmartScreen
+  bypass instructions prominent at the top, configuration guide, architecture
+  overview, crate map, FAQ.
+
+### Changed
+- Workspace version bumped to `0.3.0`.
+- `yantra version` now reports `yantra 0.3.0`.
+
 ## [0.2.0] — 2026-05-31 — Yantra Console + Canvas Fix
 
 ### Added
