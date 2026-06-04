@@ -72,7 +72,7 @@ rusqlite           = { version = "0.31", features = ["bundled", "uuid", "chrono"
 reqwest            = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 clap               = { version = "4",    features = ["derive"] }
 proptest           = "1"
-criterion         = { version = "0.5", features = ["html_reports"] }
+criterion         = { version = "0.8", features = ["html_reports"] }
 ring               = "0.17"
 parking_lot        = "0.12"
 regex              = "1"
