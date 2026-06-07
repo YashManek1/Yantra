@@ -27,3 +27,12 @@ target/
 
 crates/**/target/
 crates/**/.fastembed_cache/
+
+.opencode.json
+.cursor
+.gemini
+.kiro
+.qoder
+.vscode
+
+AGENTS.md

@@ -28,6 +28,7 @@ pub mod render;
 pub mod schema;
 pub mod seed;
 pub mod subgraph;
+pub mod token_reduction;
 
 pub use builder::GraphBuilder;
 pub use connectivity::compute_connectivity;
@@ -41,3 +42,7 @@ pub use render::{NodeProvenance, RenderedSubgraph, SubgraphManifest};
 pub use schema::{create_crg_schema, CRG_SCHEMA_SQL};
 pub use seed::{SeedExtractor, SeedSource};
 pub use subgraph::{extract_subgraph, EdgeDetails, GraphCache, SymbolDetails};
+pub use token_reduction::{
+    compute_baseline_tokens, measure_token_reduction, render_markdown_report, ReductionReport,
+    TaskMeasurement, TaskSpec,
+};
