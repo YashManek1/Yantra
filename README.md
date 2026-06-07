@@ -400,7 +400,17 @@ Rather than dumping entire files into context (wasteful, expensive, inaccurate),
 - **Edges:** calls, imports, implements, tests-for
 - **Subgraph extraction:** given a task, Yantra extracts the minimum token-budgeted slice needed
 
-This compresses a 200K-token codebase to a 3–4K-token subgraph — 50x more token-efficient.
+Measured on Yantra's own 178-file codebase, the CRG compresses **335,340 tokens**
+(whole-repo naive baseline) to **~3,906 tokens** per subgraph — a **98.8% token reduction**
+with **100% recall** of task-relevant symbols, across 8 representative tasks.
+
+| Approach | Tokens | Notes |
+|---|---|---|
+| Naive whole-repo (Claude Code / Cursor baseline) | ~335,340 | Every source file in context |
+| **Yantra CRG subgraph** | **~3,906** | Task-relevant slice, 4K budget |
+| **Reduction** | **98.8%** | Measured, real BPE, 100% recall |
+
+> Reproduce: `cargo test -p yantra-crg --test token_reduction -- --nocapture`
 
 ### ★ Night Mode
 

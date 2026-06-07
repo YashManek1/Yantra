@@ -1,4 +1,4 @@
-[profile.default]
+﻿[profile.default]
 retries          = 0
 fail-fast        = false
 test-threads     = 4
@@ -8,6 +8,12 @@ retries          = 0
 fail-fast        = false
 slow-timeout     = { period = "120s", terminate-after = 2 }
 junit            = { path = "target/nextest/ci/junit.xml" }
+
+[[profile.ci.overrides]]
+# The token-reduction integration test embeds ~2.4K symbols via ONNX on CPU.
+# Allow up to 60 minutes before CI terminates it.
+filter = "test(test_crg_delivers_significant_token_reduction_on_yantra_repo)"
+slow-timeout = { period = "3600s", terminate-after = 1 }
 
 [profile.default.junit]
 path = "target/nextest/default/junit.xml"

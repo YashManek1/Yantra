@@ -11,6 +11,7 @@ publish             = false
 yantra-core.workspace = true
 thiserror.workspace   = true
 tracing.workspace     = true
+tiktoken-rs           = "0.5"
 
 [lints]
 workspace = true

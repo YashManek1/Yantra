@@ -878,4 +878,17 @@ mod tests {
 
         fs::remove_dir_all(&temp_dir_path).unwrap();
     }
+
+    #[test]
+    fn test_supported_file_detection_accepts_rust_files() {
+        // Verifies that .rs files are recognised as indexable source files
+        // using the same LanguageRegistry mechanism that collect_supported_files uses.
+        let rust_file_path = std::path::Path::new("lib.rs");
+        let is_supported =
+            yantra_ast::LanguageRegistry::language_for_path(rust_file_path).is_some();
+        assert!(
+            is_supported,
+            ".rs files must be accepted by the language registry"
+        );
+    }
 }

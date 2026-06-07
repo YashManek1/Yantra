@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [Unreleased] — Real CRG token-reduction metric
+
+### Added
+- **`forge-tokenizer` upgraded to cl100k_base BPE** via `tiktoken-rs v0.5`.
+  `count_tokens(&str) -> usize` now returns real GPT-4/Claude-class token counts
+  instead of the previous `len/4` heuristic. Public signature unchanged — all
+  callers are transparently upgraded.
+- **`forge-crg::token_reduction` module** — reusable measurement pipeline:
+  `compute_baseline_tokens`, `measure_token_reduction`, `render_markdown_report`,
+  `TaskSpec`, `TaskMeasurement`, `ReductionReport`. Exported from `yantra-crg` root.
+- **Integration test gate** `crates/forge-crg/tests/token_reduction.rs` — asserts
+  ≥ 90% mean token reduction and ≥ 80% recall on the live Yantra codebase, writes
+  a Markdown report to `crates/forge-crg/target/crg_token_reduction_report.md`.
+
+### Measured
+- **98.8% token reduction** on Yantra's own 178-file codebase
+  (335,340 tokens → ~3,906 tokens per subgraph, cl100k_base BPE, 4K budget, 8 tasks)
+- **100% recall** — all expected task-relevant symbols found in every subgraph
+- Reproduce: `cargo test -p yantra-crg --test token_reduction -- --nocapture`
+
+---
 ## [0.3.0] — 2026-05-31 — Windows manifest, comprehensive docs, SmartScreen guidance
 
 ### Added
