@@ -44,7 +44,7 @@ ring.workspace             = true
 rusqlite.workspace         = true
 
 [dev-dependencies]
-tower          = { version = "0.4", features = ["util"] }
+tower          = { version = "0.5", features = ["util"] }
 tempfile       = "3"
 tokio          = { workspace = true }
 http-body-util = "0.1"
