@@ -15,7 +15,7 @@ path = "src/main.rs"
 render-js = ["dep:chromiumoxide"]
 
 [dependencies]
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
+chromiumoxide = { version = "0.8", features = ["tokio-runtime"], optional = true }
 yantra-core.workspace      = true
 yantra-obs.workspace       = true
 yantra-router.workspace    = true
